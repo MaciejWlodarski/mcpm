@@ -16,6 +16,7 @@ import {
   writeLock
 } from '../src/config.js';
 import { removeCommand } from '../src/commands/remove.js';
+import { configCommand } from '../src/commands/configure.js';
 import {
   forgetProject,
   listProjects,
@@ -83,6 +84,32 @@ test('CLI rozdziela update modów od upgrade wersji Minecraft', () => {
   assert.match(result.stdout, /projects/);
   assert.match(result.stdout, /current/);
   assert.match(result.stdout, /forget <project>/);
+  assert.match(result.stdout, /config \[options\]/);
+});
+
+test('ustawienie beta jest trwale zapisywane w configu i lockfile projektu', async () => {
+  const modsDir = path.join(temporaryDirectory, 'mods');
+  await createProjectState({
+    minecraftVersion: '1.21.1',
+    loader: 'fabric',
+    modsDir,
+    allowBeta: false,
+    mods: {}
+  }, {
+    minecraftVersion: '1.21.1',
+    loader: 'fabric',
+    allowBeta: false,
+    installed: {}
+  });
+
+  await configCommand({ beta: 'on' });
+  assert.equal((await readConfig()).allowBeta, true);
+  assert.equal((await readLock()).allowBeta, true);
+
+  await configCommand({ beta: 'off' });
+  assert.equal((await readConfig()).allowBeta, false);
+  assert.equal((await readLock()).allowBeta, false);
+  await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
 });
 
 test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async () => {

@@ -27,6 +27,9 @@ mcpm use <nazwa-lub-ścieżka>
 mcpm projects
 mcpm current
 mcpm forget <nazwa-lub-ścieżka>
+mcpm config
+mcpm config --beta on
+mcpm config --beta off
 mcpm search <fraza>
 mcpm install <slug>
 mcpm remove <slug>
@@ -60,6 +63,21 @@ priorytet.
 
 Rejestr jest przechowywany w `~/.mcpm/projects.json`. Na potrzeby automatyzacji
 lokalizację katalogu stanu można zmienić przez `MCPM_STATE_DIR`.
+
+## Wersje beta
+
+Ustawienie beta jest zapisywane osobno dla każdego projektu. Nie trzeba dodawać
+`--beta` do każdego polecenia:
+
+```text
+mcpm use moj-modpack
+mcpm config --beta on
+mcpm update
+```
+
+Aktualną wartość można sprawdzić przez `mcpm config`. `--beta` przy `install`,
+`update` lub `upgrade` nadal pozwala jednorazowo dopuścić bety w projekcie, który
+ma je domyślnie wyłączone.
 
 `update` aktualizuje wszystkie bezpośrednio zadeklarowane mody dla bieżącej
 wersji Minecrafta.

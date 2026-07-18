@@ -9,6 +9,7 @@ import { updateCommand } from '../src/commands/update.js';
 import { listCommand } from '../src/commands/list.js';
 import { upgradeCommand } from '../src/commands/upgrade.js';
 import { currentCommand, forgetCommand, projectsCommand, useCommand } from '../src/commands/projects.js';
+import { configCommand } from '../src/commands/configure.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -47,6 +48,12 @@ program
   .command('forget <project>')
   .description('Usuń projekt z rejestru bez usuwania jego plików')
   .action(forgetCommand);
+
+program
+  .command('config')
+  .description('Wyświetl lub zmień ustawienia bieżącego projektu')
+  .option('--beta <on|off>', 'Trwale włącz lub wyłącz wersje beta dla projektu')
+  .action(configCommand);
 
 program
   .command('install <slug>')
