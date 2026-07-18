@@ -79,6 +79,22 @@ Aktualną wartość można sprawdzić przez `mcpm config`. `--beta` przy `instal
 `update` lub `upgrade` nadal pozwala jednorazowo dopuścić bety w projekcie, który
 ma je domyślnie wyłączone.
 
+## Opcjonalne feature’y
+
+Cięższe funkcje mogą być instalowane niezależnie od podstawowego MCPM:
+
+```text
+mcpm feature list
+mcpm feature install launcher
+mcpm launcher status
+mcpm feature uninstall launcher
+```
+
+Feature `launcher` jest osobnym pakietem `@mcpm/feature-launcher`, ładowanym
+dynamicznie z `~/.mcpm/features`. Obecny pierwszy etap udostępnia diagnostykę
+aktywnego projektu, Javy, katalogu gry i przyszłego runtime’u. Pobieranie runtime’u,
+logowanie Microsoft oraz właściwe `mcpm launch` będą dodawane w kolejnych etapach.
+
 `update` aktualizuje wszystkie bezpośrednio zadeklarowane mody dla bieżącej
 wersji Minecrafta. Każdy mod jest przetwarzany osobno: brak kompatybilnej wersji
 jednego moda zostanie pokazany w podsumowaniu, ale nie zatrzyma aktualizacji

@@ -1,0 +1,17 @@
+{
+  "name": "@mcpm/feature-launcher",
+  "version": "0.1.0",
+  "description": "Optional direct Minecraft launcher feature for MCPM",
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "mcpmFeature": {
+    "apiVersion": 1,
+    "entry": "./src/index.js"
+  },
+  "license": "MIT"
+}

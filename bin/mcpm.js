@@ -10,6 +10,12 @@ import { listCommand } from '../src/commands/list.js';
 import { upgradeCommand } from '../src/commands/upgrade.js';
 import { currentCommand, forgetCommand, projectsCommand, useCommand } from '../src/commands/projects.js';
 import { configCommand } from '../src/commands/configure.js';
+import {
+  featureInstallCommand,
+  featureListCommand,
+  featureUninstallCommand
+} from '../src/commands/features.js';
+import { loadInstalledFeatures } from '../src/features.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -55,6 +61,26 @@ program
   .option('--beta <on|off>', 'Trwale włącz lub wyłącz wersje beta dla projektu')
   .action(configCommand);
 
+const featureCommand = program
+  .command('feature')
+  .description('Zarządzaj opcjonalnymi feature’ami MCPM');
+
+featureCommand
+  .command('list')
+  .description('Wyświetl dostępne i zainstalowane feature’y')
+  .action(featureListCommand);
+
+featureCommand
+  .command('install <name>')
+  .description('Zainstaluj opcjonalny feature MCPM')
+  .option('--source <path>', 'Użyj lokalnego źródła pakietu podczas developmentu')
+  .action(featureInstallCommand);
+
+featureCommand
+  .command('uninstall <name>')
+  .description('Odinstaluj opcjonalny feature MCPM')
+  .action(featureUninstallCommand);
+
 program
   .command('install <slug>')
   .alias('add')
@@ -85,6 +111,11 @@ program
   .option('-b, --beta', 'Dopuść wersje próbne (beta) dla nowej wersji gry')
   .description('Zmień wersję Minecraft projektu i przeinstaluj modyfikacje')
   .action((version, options) => upgradeCommand(version, options));
+
+const featureLoadResult = await loadInstalledFeatures(program);
+for (const failure of featureLoadResult.failures) {
+  console.warn(pc.yellow(`Nie udało się załadować feature’a ${failure.name}: ${failure.message}`));
+}
 
 try {
   await program.parseAsync(process.argv);

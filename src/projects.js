@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 const CONFIG_FILENAME = 'mcpm.json';
 const REGISTRY_FILENAME = 'projects.json';
 
-function getStateDirectory() {
+export function getStateDirectory() {
   return process.env.MCPM_STATE_DIR
     ? path.resolve(process.env.MCPM_STATE_DIR)
     : path.join(os.homedir(), '.mcpm');

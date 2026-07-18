@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { Command } from 'commander';
 import { resolveInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
 import {
@@ -19,6 +20,12 @@ import { removeCommand } from '../src/commands/remove.js';
 import { configCommand } from '../src/commands/configure.js';
 import { updateProjects } from '../src/commands/update.js';
 import {
+  installFeature,
+  listFeatures,
+  loadInstalledFeatures,
+  uninstallFeature
+} from '../src/features.js';
+import {
   forgetProject,
   listProjects,
   registerProject,
@@ -27,10 +34,12 @@ import {
 
 const originalCwd = process.cwd();
 const cliPath = fileURLToPath(new URL('../bin/mcpm.js', import.meta.url));
+const launcherFeaturePath = fileURLToPath(new URL('../features/launcher', import.meta.url));
 let temporaryDirectory;
 let originalFetch;
 let originalStateDirectory;
 let originalProjectOverride;
+let originalNpmCache;
 
 async function createProjectState(config, lock) {
   await writeConfig(config, process.cwd());
@@ -44,7 +53,9 @@ test.beforeEach(async () => {
   originalFetch = globalThis.fetch;
   originalStateDirectory = process.env.MCPM_STATE_DIR;
   originalProjectOverride = process.env.MCPM_PROJECT;
+  originalNpmCache = process.env.npm_config_cache;
   process.env.MCPM_STATE_DIR = path.join(temporaryDirectory, 'state');
+  process.env.npm_config_cache = path.join(temporaryDirectory, 'npm-cache');
   delete process.env.MCPM_PROJECT;
 });
 
@@ -54,6 +65,8 @@ test.afterEach(async () => {
   else process.env.MCPM_STATE_DIR = originalStateDirectory;
   if (originalProjectOverride === undefined) delete process.env.MCPM_PROJECT;
   else process.env.MCPM_PROJECT = originalProjectOverride;
+  if (originalNpmCache === undefined) delete process.env.npm_config_cache;
+  else process.env.npm_config_cache = originalNpmCache;
   process.chdir(originalCwd);
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
 });
@@ -133,6 +146,23 @@ test('update pomija niekompatybilny mod i aktualizuje pozostałe', async () => {
     slug: 'firmament',
     message: 'Brak kompatybilnej wersji'
   }]);
+});
+
+test('opcjonalny launcher można zainstalować, załadować i odinstalować', async () => {
+  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
+
+  const installed = await installFeature('launcher', { source: launcherFeaturePath });
+  assert.equal(installed.name, 'launcher');
+  assert.equal(installed.version, '0.1.0');
+
+  const program = new Command();
+  const loaded = await loadInstalledFeatures(program);
+  assert.deepEqual(loaded.failures, []);
+  assert.deepEqual(loaded.loaded, [{ name: 'launcher', version: '0.1.0' }]);
+  assert.ok(program.commands.some(command => command.name() === 'launcher'));
+
+  await uninstallFeature('launcher');
+  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
 });
 
 test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async () => {
