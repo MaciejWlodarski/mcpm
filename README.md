@@ -80,7 +80,9 @@ Aktualną wartość można sprawdzić przez `mcpm config`. `--beta` przy `instal
 ma je domyślnie wyłączone.
 
 `update` aktualizuje wszystkie bezpośrednio zadeklarowane mody dla bieżącej
-wersji Minecrafta.
+wersji Minecrafta. Każdy mod jest przetwarzany osobno: brak kompatybilnej wersji
+jednego moda zostanie pokazany w podsumowaniu, ale nie zatrzyma aktualizacji
+pozostałych.
 
 `upgrade <wersja>` zmienia wersję Minecrafta i przygotowuje cały kompatybilny
 zestaw modów przed zastąpieniem istniejących plików.

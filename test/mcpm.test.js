@@ -17,6 +17,7 @@ import {
 } from '../src/config.js';
 import { removeCommand } from '../src/commands/remove.js';
 import { configCommand } from '../src/commands/configure.js';
+import { updateProjects } from '../src/commands/update.js';
 import {
   forgetProject,
   listProjects,
@@ -110,6 +111,28 @@ test('ustawienie beta jest trwale zapisywane w configu i lockfile projektu', asy
   assert.equal((await readConfig()).allowBeta, false);
   assert.equal((await readLock()).allowBeta, false);
   await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
+});
+
+test('update pomija niekompatybilny mod i aktualizuje pozostałe', async () => {
+  const calls = [];
+  const installer = async ([slug]) => {
+    calls.push(slug);
+    if (slug === 'firmament') {
+      throw new Error('Brak kompatybilnej wersji');
+    }
+    if (slug === 'sodium') return { downloaded: 1, removed: 1, cleanupWarning: null };
+    return { downloaded: 0, removed: 0, cleanupWarning: null };
+  };
+
+  const summary = await updateProjects(['firmament', 'sodium', 'mod-menu'], {}, installer);
+
+  assert.deepEqual(calls, ['firmament', 'sodium', 'mod-menu']);
+  assert.equal(summary.updated, 1);
+  assert.equal(summary.unchanged, 1);
+  assert.deepEqual(summary.failures, [{
+    slug: 'firmament',
+    message: 'Brak kompatybilnej wersji'
+  }]);
 });
 
 test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async () => {
