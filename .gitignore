@@ -1,0 +1,6 @@
+node_modules/
+.npm-cache/
+mods/
+mcpm.json
+mcpm-lock.json
+.mcpm-staging-*/
