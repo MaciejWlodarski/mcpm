@@ -57,4 +57,3 @@ export async function upgradeCommand(newVersion, options = {}) {
   )));
   return result;
 }
-
