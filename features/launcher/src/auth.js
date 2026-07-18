@@ -12,8 +12,8 @@ function getErrorMessage(payload, fallback) {
   if (!payload || typeof payload !== 'object') return fallback;
   const description = payload.error_description || payload.errorMessage || payload.message;
   if (description?.includes('Invalid app registration')) {
-    return 'App ID launchera nie znajduje się jeszcze na allowliście Minecraft Services. ' +
-      'Zgłoś aplikację do przeglądu: https://aka.ms/mce-reviewappid';
+    return 'The launcher App ID has not yet been approved by Minecraft Services. ' +
+      'Submit the application for review: https://aka.ms/mce-reviewappid';
   }
   const code = payload.XErr || payload.error;
   if (description && code) return `${description} (${code})`;
@@ -63,7 +63,7 @@ export async function requestDeviceCode(options = {}) {
   }, fetchImpl);
   const payload = await readResponse(response);
   if (!response.ok) {
-    throw new Error(`Nie udało się rozpocząć logowania Microsoft: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
+    throw new Error(`Could not start Microsoft sign-in: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
   }
   return payload;
 }
@@ -92,15 +92,15 @@ export async function pollForMicrosoftToken(deviceCode, options = {}) {
       continue;
     }
     if (payload.error === 'authorization_declined') {
-      throw new Error('Logowanie Microsoft zostało anulowane przez użytkownika.');
+      throw new Error('Microsoft sign-in was cancelled by the user.');
     }
     if (payload.error === 'expired_token') {
-      throw new Error('Kod logowania Microsoft wygasł. Uruchom logowanie ponownie.');
+      throw new Error('The Microsoft sign-in code has expired. Start the sign-in process again.');
     }
-    throw new Error(`Logowanie Microsoft nie powiodło się: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
+    throw new Error(`Microsoft sign-in failed: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
   }
 
-  throw new Error('Kod logowania Microsoft wygasł. Uruchom logowanie ponownie.');
+  throw new Error('The Microsoft sign-in code has expired. Start the sign-in process again.');
 }
 
 export async function refreshMicrosoftToken(refreshToken, options = {}) {
@@ -114,7 +114,7 @@ export async function refreshMicrosoftToken(refreshToken, options = {}) {
   }, fetchImpl);
   const payload = await readResponse(response);
   if (!response.ok) {
-    throw new Error(`Nie udało się odświeżyć logowania Microsoft: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
+    throw new Error(`Could not refresh Microsoft sign-in: ${getErrorMessage(payload, `HTTP ${response.status}`)}`);
   }
   return payload;
 }
@@ -133,7 +133,7 @@ export async function exchangeMicrosoftTokenForMinecraft(microsoftToken, options
       RelyingParty: 'http://auth.xboxlive.com',
       TokenType: 'JWT'
     })
-  }, 'Logowanie Xbox Live nie powiodło się', fetchImpl);
+  }, 'Xbox Live sign-in failed', fetchImpl);
 
   const xsts = await requestJson(XSTS_AUTH_URL, {
     method: 'POST',
@@ -146,29 +146,29 @@ export async function exchangeMicrosoftTokenForMinecraft(microsoftToken, options
       RelyingParty: 'rp://api.minecraftservices.com/',
       TokenType: 'JWT'
     })
-  }, 'Autoryzacja Xbox Live nie powiodła się', fetchImpl);
+  }, 'Xbox Live authorization failed', fetchImpl);
 
   const userHash = xsts.DisplayClaims?.xui?.[0]?.uhs;
   if (!userHash || !xsts.Token) {
-    throw new Error('Odpowiedź Xbox Live nie zawiera tokenu XSTS lub identyfikatora użytkownika.');
+    throw new Error('The Xbox Live response does not contain an XSTS token or user identifier.');
   }
 
   const minecraft = await requestJson(MINECRAFT_AUTH_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({ identityToken: `XBL3.0 x=${userHash};${xsts.Token}` })
-  }, 'Logowanie do Minecraft Services nie powiodło się', fetchImpl);
+  }, 'Minecraft Services sign-in failed', fetchImpl);
 
   const entitlements = await requestJson(MINECRAFT_ENTITLEMENTS_URL, {
     headers: bearerHeaders(minecraft.access_token)
-  }, 'Nie udało się sprawdzić licencji Minecraft', fetchImpl);
+  }, 'Could not verify the Minecraft license', fetchImpl);
   if (!Array.isArray(entitlements.items) || entitlements.items.length === 0) {
-    throw new Error('To konto Microsoft nie ma aktywnej licencji Minecraft: Java Edition.');
+    throw new Error('This Microsoft account does not have an active Minecraft: Java Edition license.');
   }
 
   const profile = await requestJson(MINECRAFT_PROFILE_URL, {
     headers: bearerHeaders(minecraft.access_token)
-  }, 'Nie udało się pobrać profilu Minecraft', fetchImpl);
+  }, 'Could not fetch the Minecraft profile', fetchImpl);
 
   const savedAt = Date.now();
   return {
@@ -198,14 +198,14 @@ export async function createMinecraftSession(options = {}) {
   if (options.onDeviceCode) await options.onDeviceCode(deviceCode);
   const microsoftToken = await pollForMicrosoftToken(deviceCode, { ...options, clientId });
   if (!microsoftToken.refresh_token) {
-    throw new Error('Microsoft nie zwrócił tokenu odświeżania. Sprawdź zakres XboxLive.offline_access.');
+    throw new Error('Microsoft did not return a refresh token. Check the XboxLive.offline_access scope.');
   }
   return exchangeMicrosoftTokenForMinecraft(microsoftToken, { ...options, clientId });
 }
 
 export async function renewMinecraftSession(session, options = {}) {
   if (!session?.microsoft?.refreshToken) {
-    throw new Error('Zapisana sesja nie zawiera tokenu odświeżania. Zaloguj się ponownie.');
+    throw new Error('The saved session does not contain a refresh token. Sign in again.');
   }
   const clientId = options.clientId || session.clientId || DEFAULT_MICROSOFT_CLIENT_ID;
   const microsoftToken = await refreshMicrosoftToken(session.microsoft.refreshToken, {

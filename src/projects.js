@@ -53,7 +53,7 @@ export async function readProjectRegistry() {
     if (error.code === 'ENOENT') {
       return { version: 1, active: null, projects: {} };
     }
-    throw new Error(`Nie udało się odczytać rejestru projektów MCPM: ${error.message}`, { cause: error });
+    throw new Error(`Failed to read the MCPM project registry: ${error.message}`, { cause: error });
   }
 }
 
@@ -71,7 +71,7 @@ async function writeProjectRegistry(registry) {
     } catch (cleanupError) {
       if (cleanupError.code !== 'ENOENT') error.cleanupError ||= cleanupError;
     }
-    throw new Error(`Nie udało się zapisać rejestru projektów MCPM: ${error.message}`, { cause: error });
+    throw new Error(`Failed to write the MCPM project registry: ${error.message}`, { cause: error });
   }
 }
 
@@ -89,7 +89,7 @@ function createUniqueName(registry, desiredName, projectRoot) {
 export async function registerProject(projectPath, options = {}) {
   const root = await findProjectRoot(projectPath);
   if (!root) {
-    throw new Error(`Katalog ${path.resolve(projectPath)} nie zawiera projektu MCPM`);
+    throw new Error(`Directory ${path.resolve(projectPath)} does not contain an MCPM project`);
   }
 
   const registry = await readProjectRegistry();
@@ -118,7 +118,7 @@ export async function setActiveProject(reference) {
   if (registered) {
     const root = path.resolve(registered.path);
     if (!(await isProjectRoot(root))) {
-      throw new Error(`Zarejestrowany projekt "${reference}" nie istnieje już pod ścieżką ${root}`);
+      throw new Error(`Registered project "${reference}" no longer exists at ${root}`);
     }
     registry.active = reference;
     await writeProjectRegistry(registry);
@@ -135,7 +135,7 @@ export async function forgetProject(reference) {
     : Object.entries(registry.projects)
       .find(([, project]) => path.resolve(project.path) === path.resolve(reference));
 
-  if (!entry) throw new Error(`Projekt "${reference}" nie jest zarejestrowany`);
+  if (!entry) throw new Error(`Project "${reference}" is not registered`);
 
   const [name, project] = entry;
   delete registry.projects[name];
@@ -158,7 +158,7 @@ export async function resolveProjectRoot() {
   if (process.env.MCPM_PROJECT) {
     const environmentRoot = await findProjectRoot(process.env.MCPM_PROJECT);
     if (environmentRoot) return environmentRoot;
-    throw new Error(`MCPM_PROJECT nie wskazuje na poprawny projekt: ${process.env.MCPM_PROJECT}`);
+    throw new Error(`MCPM_PROJECT does not point to a valid project: ${process.env.MCPM_PROJECT}`);
   }
 
   const localRoot = await findProjectRoot();
@@ -170,12 +170,12 @@ export async function resolveProjectRoot() {
     const activeRoot = path.resolve(activeProject.path);
     if (await isProjectRoot(activeRoot)) return activeRoot;
     throw new Error(
-      `Aktywny projekt "${registry.active}" nie istnieje już pod ścieżką ${activeRoot}. ` +
-      'Wybierz inny przez "mcpm use <nazwa-lub-ścieżka>".'
+      `Active project "${registry.active}" no longer exists at ${activeRoot}. ` +
+      'Select another one with "mcpm use <name-or-path>".'
     );
   }
 
   throw new Error(
-    'Nie wybrano projektu MCPM. Uruchom "mcpm use <ścieżka>" albo zainicjalizuj projekt przez "mcpm init".'
+    'No MCPM project is selected. Run "mcpm use <path>" or initialize one with "mcpm init".'
   );
 }

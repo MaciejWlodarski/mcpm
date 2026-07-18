@@ -23,7 +23,7 @@ function jsonResponse(value, status = 200) {
   });
 }
 
-test('device code używa kont osobistych i zakresów Xbox Live', async () => {
+test('device code flow uses personal accounts and Xbox Live scopes', async () => {
   let request;
   const deviceCode = await requestDeviceCode({
     clientId: 'client-id',
@@ -45,7 +45,7 @@ test('device code używa kont osobistych i zakresów Xbox Live', async () => {
   assert.equal(deviceCode.user_code, 'ABCD-EFGH');
 });
 
-test('polling czeka na akceptację kodu i zwraca token Microsoft', async () => {
+test('polling waits for code approval and returns a Microsoft token', async () => {
   const responses = [
     jsonResponse({ error: 'authorization_pending' }, 400),
     jsonResponse({
@@ -69,7 +69,7 @@ test('polling czeka na akceptację kodu i zwraca token Microsoft', async () => {
   assert.deepEqual(waits, [1000, 1000]);
 });
 
-test('token Microsoft jest wymieniany na sesję i profil Minecraft', async () => {
+test('a Microsoft token is exchanged for a Minecraft session and profile', async () => {
   const requests = [];
   const responses = [
     jsonResponse({ Token: 'xbox-user-token' }),
@@ -108,7 +108,7 @@ test('token Microsoft jest wymieniany na sesję i profil Minecraft', async () =>
   assert.equal(session.minecraft.accessToken, 'minecraft-token');
 });
 
-test('brak licencji Minecraft przerywa logowanie przed pobraniem profilu', async () => {
+test('a missing Minecraft license stops sign-in before fetching the profile', async () => {
   const responses = [
     jsonResponse({ Token: 'xbox-user-token' }),
     jsonResponse({ Token: 'xsts-token', DisplayClaims: { xui: [{ uhs: 'user-hash' }] } }),
@@ -121,11 +121,11 @@ test('brak licencji Minecraft przerywa logowanie przed pobraniem profilu', async
       access_token: 'microsoft-token',
       refresh_token: 'refresh-token'
     }, { fetchImpl: async () => responses.shift() }),
-    /nie ma aktywnej licencji Minecraft/
+    /does not have an active Minecraft: Java Edition license/
   );
 });
 
-test('odrzucone App ID pokazuje instrukcję zgłoszenia do Minecraft Services', async () => {
+test('a rejected App ID displays Minecraft Services review instructions', async () => {
   const responses = [
     jsonResponse({ Token: 'xbox-user-token' }),
     jsonResponse({ Token: 'xsts-token', DisplayClaims: { xui: [{ uhs: 'user-hash' }] } }),
@@ -137,11 +137,11 @@ test('odrzucone App ID pokazuje instrukcję zgłoszenia do Minecraft Services', 
       access_token: 'microsoft-token',
       refresh_token: 'refresh-token'
     }, { fetchImpl: async () => responses.shift() }),
-    /allowliście Minecraft Services.*mce-reviewappid/
+    /not yet been approved by Minecraft Services.*mce-reviewappid/
   );
 });
 
-test('magazyn sesji zapisuje wyłącznie zaszyfrowaną wartość', async () => {
+test('session storage writes only an encrypted value', async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-auth-'));
   const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
   const protect = async value => Buffer.from(value, 'utf8').toString('base64');
@@ -159,7 +159,7 @@ test('magazyn sesji zapisuje wyłącznie zaszyfrowaną wartość', async () => {
   }
 });
 
-test('Windows DPAPI szyfruje sesję dla bieżącego użytkownika', {
+test('Windows DPAPI encrypts the session for the current user', {
   skip: process.platform !== 'win32'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-dpapi-'));

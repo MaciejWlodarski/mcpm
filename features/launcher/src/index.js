@@ -68,16 +68,16 @@ async function getLauncherStatus(api) {
 async function launcherStatusCommand(api) {
   const status = await getLauncherStatus(api);
   const session = await readSession(api.getStateDirectory());
-  console.log('MCPM Launcher - diagnostyka:');
-  console.log(`  Projekt:    ${status.projectRoot}`);
+  console.log('MCPM Launcher - diagnostics:');
+  console.log(`  Project:    ${status.projectRoot}`);
   console.log(`  Minecraft:  ${status.config.minecraftVersion}`);
   console.log(`  Loader:     ${status.config.loader}`);
   console.log(`  Game dir:   ${status.gameDirectory}`);
   console.log(`  Mods:       ${status.installedMods}`);
-  console.log(`  Java:       ${status.java.available ? status.java.version : 'nie znaleziono'}`);
-  console.log(`  Runtime:    ${status.runtimeInstalled ? 'gotowy' : 'niezainstalowany'}`);
+  console.log(`  Java:       ${status.java.available ? status.java.version : 'not found'}`);
+  console.log(`  Runtime:    ${status.runtimeInstalled ? 'ready' : 'not installed'}`);
   console.log(`  Runtime dir: ${status.runtimeDirectory}`);
-  console.log(`  Microsoft:  ${session ? `zalogowano jako ${session.profile.name}` : 'niezalogowany'}`);
+  console.log(`  Microsoft:  ${session ? `signed in as ${session.profile.name}` : 'not signed in'}`);
   return status;
 }
 
@@ -89,21 +89,21 @@ async function launcherLoginCommand(api) {
   const stateDirectory = api.getStateDirectory();
   const existing = await readSession(stateDirectory);
   if (existing) {
-    console.log(`Zapisane konto: ${existing.profile.name}`);
-    console.log('Kontynuowanie zastąpi bieżącą sesję po pomyślnym zalogowaniu.');
+    console.log(`Saved account: ${existing.profile.name}`);
+    console.log('Continuing will replace the current session after a successful sign-in.');
   }
 
   const session = await createMinecraftSession({
     clientId: getClientId(),
     onDeviceCode(deviceCode) {
-      console.log('\nZaloguj się do konta Microsoft posiadającego Minecraft: Java Edition:');
-      console.log(`  Adres: ${deviceCode.verification_uri || deviceCode.verification_uri_complete}`);
-      console.log(`  Kod:   ${deviceCode.user_code}`);
-      console.log('\nOczekiwanie na potwierdzenie w przeglądarce...');
+      console.log('\nSign in with the Microsoft account that owns Minecraft: Java Edition:');
+      console.log(`  URL:  ${deviceCode.verification_uri || deviceCode.verification_uri_complete}`);
+      console.log(`  Code: ${deviceCode.user_code}`);
+      console.log('\nWaiting for confirmation in your browser...');
     }
   });
   await saveSession(stateDirectory, session);
-  console.log(`\nZalogowano jako ${session.profile.name} (${session.profile.id}).`);
+  console.log(`\nSigned in as ${session.profile.name} (${session.profile.id}).`);
   return session;
 }
 
@@ -111,56 +111,56 @@ async function launcherAccountCommand(api, options = {}) {
   const stateDirectory = api.getStateDirectory();
   let session = await readSession(stateDirectory);
   if (!session) {
-    throw new Error('Nie jesteś zalogowany. Użyj "mcpm launcher login".');
+    throw new Error('You are not signed in. Run "mcpm launcher login".');
   }
 
   const expiresAt = Date.parse(session.minecraft?.expiresAt || '');
   if (options.refresh || !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60_000) {
-    console.log('Odświeżanie sesji Minecraft...');
+    console.log('Refreshing the Minecraft session...');
     session = await renewMinecraftSession(session, { clientId: getClientId() });
     await saveSession(stateDirectory, session);
   }
 
-  console.log('Konto Minecraft:');
-  console.log(`  Nazwa:      ${session.profile.name}`);
+  console.log('Minecraft account:');
+  console.log(`  Name:       ${session.profile.name}`);
   console.log(`  UUID:       ${session.profile.id}`);
-  console.log(`  Sesja ważna do: ${session.minecraft.expiresAt}`);
+  console.log(`  Session expires: ${session.minecraft.expiresAt}`);
   return session;
 }
 
 async function launcherLogoutCommand(api) {
   const removed = await clearSession(api.getStateDirectory());
-  console.log(removed ? 'Wylogowano z konta Minecraft.' : 'Nie było zapisanej sesji Minecraft.');
+  console.log(removed ? 'Signed out of the Minecraft account.' : 'No saved Minecraft session was found.');
   return removed;
 }
 
 export async function registerFeature({ program, api }) {
   if (api.version !== 1) {
-    throw new Error(`Nieobsługiwana wersja MCPM Feature API: ${api.version}`);
+    throw new Error(`Unsupported MCPM Feature API version: ${api.version}`);
   }
 
   const launcher = program
     .command('launcher')
-    .description('Diagnostyka i konfiguracja opcjonalnego launchera Minecraft');
+    .description('Diagnostics and configuration for the optional Minecraft launcher');
 
   launcher
     .command('status')
-    .description('Sprawdź gotowość aktywnego projektu do bezpośredniego uruchamiania')
+    .description('Check whether the active project is ready for direct launching')
     .action(() => launcherStatusCommand(api));
 
   launcher
     .command('login')
-    .description('Zaloguj się do Minecraft przez kod urządzenia Microsoft')
+    .description('Sign in to Minecraft with a Microsoft device code')
     .action(() => launcherLoginCommand(api));
 
   launcher
     .command('account')
-    .description('Wyświetl zapisane konto Minecraft')
-    .option('--refresh', 'Wymuś odświeżenie sesji i ponowne sprawdzenie konta')
+    .description('Display the saved Minecraft account')
+    .option('--refresh', 'Force a session refresh and verify the account again')
     .action(options => launcherAccountCommand(api, options));
 
   launcher
     .command('logout')
-    .description('Usuń bezpiecznie zapisaną sesję Minecraft')
+    .description('Remove the securely saved Minecraft session')
     .action(() => launcherLogoutCommand(api));
 }

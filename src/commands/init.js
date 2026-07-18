@@ -8,11 +8,11 @@ import { registerProject } from '../projects.js';
  * Executes the `mcpm init` command to interactively create configuration files.
  */
 export async function initCommand() {
-  intro(pc.bgCyan(pc.black(' MCPM - Inicjalizacja projektu ')));
+  intro(pc.bgCyan(pc.black(' MCPM - Project setup ')));
 
   let mcVersions = [];
   const s = spinner();
-  s.start('Pobieranie wersji Minecraft z Modrinth...');
+  s.start('Fetching Minecraft versions from Modrinth...');
   try {
     const rawVersions = await getGameVersions();
     // Filter to releases, sort by date descending
@@ -20,9 +20,9 @@ export async function initCommand() {
       .filter(v => v.version_type === 'release')
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .map(v => v.version);
-    s.stop('Wersje Minecraft pobrane.');
+    s.stop('Minecraft versions fetched.');
   } catch (err) {
-    s.stop('Nie udało się pobrać wersji z Modrinth (użycie trybu offline).');
+    s.stop('Failed to fetch versions from Modrinth (using offline mode).');
   }
 
   // Build options for selecting Minecraft version
@@ -30,51 +30,51 @@ export async function initCommand() {
   if (mcVersions.length > 0) {
     // Take the top 12 versions
     mcVersionOptions = mcVersions.slice(0, 12).map(v => ({ value: v, label: v }));
-    mcVersionOptions.push({ value: 'custom', label: 'Wpisz inną wersję...' });
+    mcVersionOptions.push({ value: 'custom', label: 'Enter another version...' });
   }
 
   let mcVersion;
   if (mcVersionOptions.length > 0) {
     mcVersion = await select({
-      message: 'Wybierz wersję Minecraft:',
+      message: 'Select a Minecraft version:',
       options: mcVersionOptions
     });
     
     if (isCancel(mcVersion)) {
-      outro(pc.yellow('Inicjalizacja anulowana.'));
+      outro(pc.yellow('Setup cancelled.'));
       process.exit(0);
     }
     
     if (mcVersion === 'custom') {
       mcVersion = await text({
-        message: 'Podaj wersję Minecraft:',
+        message: 'Enter the Minecraft version:',
         placeholder: '1.20.1',
         validate(value) {
-          if (!value) return 'Wersja nie może być pusta!';
+          if (!value) return 'The version cannot be empty!';
         }
       });
       if (isCancel(mcVersion)) {
-        outro(pc.yellow('Inicjalizacja anulowana.'));
+        outro(pc.yellow('Setup cancelled.'));
         process.exit(0);
       }
     }
   } else {
     // Fallback if API failed or empty
     mcVersion = await text({
-      message: 'Podaj wersję Minecraft (np. 1.20.1):',
+      message: 'Enter the Minecraft version (for example, 1.20.1):',
       placeholder: '1.20.1',
       validate(value) {
-        if (!value) return 'Wersja nie może być pusta!';
+        if (!value) return 'The version cannot be empty!';
       }
     });
     if (isCancel(mcVersion)) {
-      outro(pc.yellow('Inicjalizacja anulowana.'));
+      outro(pc.yellow('Setup cancelled.'));
       process.exit(0);
     }
   }
 
   const loader = await select({
-    message: 'Wybierz mod loader:',
+    message: 'Select a mod loader:',
     options: [
       { value: 'fabric', label: 'Fabric' },
       { value: 'forge', label: 'Forge' },
@@ -84,31 +84,31 @@ export async function initCommand() {
   });
 
   if (isCancel(loader)) {
-    outro(pc.yellow('Inicjalizacja anulowana.'));
+    outro(pc.yellow('Setup cancelled.'));
     process.exit(0);
   }
 
   const modsDir = await text({
-    message: 'Ścieżka do folderu z modami:',
+    message: 'Path to the mods directory:',
     placeholder: './mods',
     initialValue: './mods',
     validate(value) {
-      if (!value) return 'Ścieżka nie może być pusta!';
+      if (!value) return 'The path cannot be empty!';
     }
   });
 
   if (isCancel(modsDir)) {
-    outro(pc.yellow('Inicjalizacja anulowana.'));
+    outro(pc.yellow('Setup cancelled.'));
     process.exit(0);
   }
 
   const allowBeta = await confirm({
-    message: 'Czy dopuszczać wersje próbne (beta) modyfikacji?',
+    message: 'Allow beta mod releases?',
     initialValue: false
   });
 
   if (isCancel(allowBeta)) {
-    outro(pc.yellow('Inicjalizacja anulowana.'));
+    outro(pc.yellow('Setup cancelled.'));
     process.exit(0);
   }
 
@@ -134,7 +134,7 @@ export async function initCommand() {
   const registered = await registerProject(projectRoot);
 
   outro(pc.green(
-    `Projekt MCPM "${registered.name}" zainicjalizowany i ustawiony jako aktywny. ` +
-    'Stworzono mcpm.json oraz mcpm-lock.json.'
+    `MCPM project "${registered.name}" was initialized and set as active. ` +
+    'Created mcpm.json and mcpm-lock.json.'
   ));
 }

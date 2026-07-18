@@ -8,28 +8,28 @@ import pc from 'picocolors';
  */
 export async function searchCommand(query) {
   if (!query || query.trim() === '') {
-    console.error(pc.red('Błąd: Podaj frazę do wyszukania. Przykład: mcpm search sodium'));
+    console.error(pc.red('Error: provide a search query. Example: mcpm search sodium'));
     process.exit(1);
   }
 
-  const spinner = ora(`Wyszukiwanie "${pc.cyan(query)}" w Modrinth...`).start();
+  const spinner = ora(`Searching Modrinth for "${pc.cyan(query)}"...`).start();
 
   try {
     const results = await searchMods(query);
     
     if (results.length === 0) {
-      spinner.info(`Nie znaleziono modów dla frazy: "${query}"`);
+      spinner.info(`No mods found for: "${query}"`);
       return;
     }
 
     spinner.stop();
-    console.log(`\nZnalezione mody dla "${pc.cyan(query)}":\n`);
+    console.log(`\nMods found for "${pc.cyan(query)}":\n`);
 
     results.forEach(mod => {
       const title = pc.bold(pc.cyan(mod.title));
       const slug = pc.yellow(`[slug: ${mod.slug}]`);
-      const downloads = pc.green(`${mod.downloads.toLocaleString()} pobrań`);
-      const author = pc.gray(`Autor: ${mod.author}`);
+      const downloads = pc.green(`${mod.downloads.toLocaleString()} downloads`);
+      const author = pc.gray(`Author: ${mod.author}`);
       
       console.log(`${title} ${slug} - ${downloads} (${author})`);
       if (mod.description) {
@@ -40,7 +40,7 @@ export async function searchCommand(query) {
       console.log(); // Blank line for spacing
     });
   } catch (err) {
-    spinner.fail(`Błąd podczas wyszukiwania: ${err.message}`);
+    spinner.fail(`Search failed: ${err.message}`);
     process.exit(1);
   }
 }

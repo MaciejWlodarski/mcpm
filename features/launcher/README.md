@@ -1,8 +1,8 @@
 # @mcpm/feature-launcher
 
-Opcjonalny feature MCPM przygotowujący bezpośrednie uruchamianie Minecrafta.
+An optional MCPM feature that prepares projects for launching Minecraft directly.
 
-Aktualny etap udostępnia:
+The current release provides:
 
 ```text
 mcpm launcher status
@@ -12,17 +12,19 @@ mcpm launcher account --refresh
 mcpm launcher logout
 ```
 
-`login` używa kodu urządzenia Microsoft, a następnie wymienia token przez Xbox Live,
-XSTS i Minecraft Services. Konto jest wspólne dla wszystkich projektów MCPM. Token
-odświeżania i sesja Minecraft są szyfrowane na Windows mechanizmem DPAPI dla
-bieżącego użytkownika.
+`login` uses Microsoft Device Code Flow, then exchanges the token through Xbox
+Live, XSTS, and Minecraft Services. The account is shared by all MCPM projects.
+On Windows, the refresh token and Minecraft session are encrypted for the current
+user with DPAPI.
 
-Client ID aplikacji MCPM jest publiczny. Podczas developmentu można go zastąpić
-zmienną `MCPM_MICROSOFT_CLIENT_ID`.
+The MCPM application client ID is public. During development, it can be
+overridden with the `MCPM_MICROSOFT_CLIENT_ID` environment variable.
 
-Minecraft Services ręcznie dopuszcza nowe aplikacje klienckie. Przed pierwszym
-użyciem App ID musi zostać zaakceptowane przez formularz przeglądu Java Edition:
-`https://aka.ms/mce-reviewappid`. Bez wpisu na allowliście końcowa wymiana tokenu
-zwróci `Invalid app registration`, mimo poprawnego logowania Microsoft i Xbox.
+Minecraft Services manually approves new client applications. Before the first
+successful sign-in, the App ID must be accepted through the Java Edition
+application review form: https://aka.ms/mce-reviewappid. Without approval, the
+final token exchange returns `Invalid app registration` even when Microsoft and
+Xbox authentication succeeds.
 
-Kolejne etapy obejmą pobieranie runtime’u i właściwe polecenie `mcpm launch`.
+Runtime downloading and the final `mcpm launch` command will be added in later
+development stages.

@@ -30,7 +30,7 @@ async function pathExists(filePath) {
 
 function validateFilename(filename) {
   if (!filename || filename !== path.basename(filename) || filename === '.' || filename === '..') {
-    throw new Error(`Niebezpieczna nazwa pliku otrzymana z API: ${filename || '<pusta>'}`);
+    throw new Error(`Unsafe filename received from the API: ${filename || '<empty>'}`);
   }
 }
 
@@ -51,14 +51,14 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
     const projectId = project.id;
 
     if (exactVersion && exactVersion.project_id !== projectId) {
-      throw new Error(`Wersja ${exactVersion.id} nie należy do projektu ${project.title}`);
+      throw new Error(`Version ${exactVersion.id} does not belong to project ${project.title}`);
     }
 
     const existing = items.get(projectId);
     if (existing) {
       if (exactVersion && existing.version.id !== exactVersion.id) {
         throw new Error(
-          `Konflikt wersji zależności ${project.title}: ${existing.version.version_number} i ${exactVersion.version_number}`
+          `Dependency version conflict for ${project.title}: ${existing.version.version_number} and ${exactVersion.version_number}`
         );
       }
       if (direct) {
@@ -84,7 +84,7 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
       );
       if (versions.length === 0) {
         throw new Error(
-          `Nie znaleziono kompatybilnej wersji dla ${project.title} ` +
+          `No compatible version found for ${project.title} ` +
           `(Minecraft ${config.minecraftVersion}, loader ${config.loader})`
         );
       }
@@ -124,7 +124,7 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
         }
 
         if (!dependencyProjectId) {
-          throw new Error(`Zależność moda ${project.title} nie zawiera project_id ani poprawnego version_id`);
+          throw new Error(`Dependency of ${project.title} has neither a project_id nor a valid version_id`);
         }
 
         const dependencyItem = await resolveProject(dependencyProjectId, {
@@ -201,13 +201,13 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
   for (const [projectId, item] of plan.items) {
     const file = (item.version.files || []).find(candidate => candidate.primary) || item.version.files?.[0];
     if (!file) {
-      throw new Error(`Brak pliku do pobrania dla ${item.project.title} ${item.version.version_number}`);
+      throw new Error(`No downloadable file found for ${item.project.title} ${item.version.version_number}`);
     }
     validateFilename(file.filename);
 
     const owner = targetOwners.get(file.filename);
     if (owner && owner !== projectId) {
-      throw new Error(`Dwa mody próbują zainstalować ten sam plik: ${file.filename}`);
+      throw new Error(`Two mods are trying to install the same file: ${file.filename}`);
     }
     targetOwners.set(file.filename, projectId);
 
@@ -272,12 +272,12 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
 
     for (const download of downloads) {
       if (await pathExists(download.targetPath) && !managedFiles.has(download.file.filename)) {
-        throw new Error(`Plik ${download.file.filename} już istnieje i nie jest zarządzany przez MCPM`);
+        throw new Error(`File ${download.file.filename} already exists and is not managed by MCPM`);
       }
       const otherOwners = [...(managedFileOwners.get(download.file.filename) || [])]
         .filter(ownerId => ownerId !== download.projectId && nextLock.installed[ownerId]);
       if (otherOwners.length > 0) {
-        throw new Error(`Plik ${download.file.filename} należy już do innego zainstalowanego moda`);
+        throw new Error(`File ${download.file.filename} already belongs to another installed mod`);
       }
 
       const projectStageDir = path.join(stagingDir, download.projectId);

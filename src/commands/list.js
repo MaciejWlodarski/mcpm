@@ -12,7 +12,7 @@ import {
  */
 export async function listCommand() {
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
   const config = await readConfig();
@@ -21,15 +21,15 @@ export async function listCommand() {
 
   const installedCount = Object.keys(lock.installed).length;
   
-  console.log(pc.bold('MCPM - Konfiguracja projektu:'));
-  console.log(`  Projekt:   ${pc.cyan(projectRoot)}`);
+  console.log(pc.bold('MCPM - Project configuration:'));
+  console.log(`  Project:   ${pc.cyan(projectRoot)}`);
   console.log(`  Minecraft: ${pc.cyan(config.minecraftVersion)}`);
   console.log(`  Loader:    ${pc.cyan(config.loader)}`);
-  console.log(`  Katalog:   ${pc.cyan(resolveModsDir(config, projectRoot))}`);
-  console.log(`  Zainstalowane modyfikacje: ${pc.cyan(installedCount)}\n`);
+  console.log(`  Directory: ${pc.cyan(resolveModsDir(config, projectRoot))}`);
+  console.log(`  Installed mods: ${pc.cyan(installedCount)}\n`);
 
   if (installedCount === 0) {
-    console.log(pc.yellow('Brak zainstalowanych modyfikacji.'));
+    console.log(pc.yellow('No mods are installed.'));
     return;
   }
 
@@ -61,21 +61,21 @@ export async function listCommand() {
 
   modsList.forEach(mod => {
     const typeLabel = mod.isDependency 
-      ? pc.gray('(zależność)') 
-      : pc.bold(pc.green('(bezpośredni)'));
+      ? pc.gray('(dependency)')
+      : pc.bold(pc.green('(direct)'));
       
     const versionLabel = pc.cyan(`v${mod.version}`);
     
-    console.log(`• ${pc.bold(mod.title)} ${pc.yellow(`[${mod.slug}]`)} - ${versionLabel} ${typeLabel}`);
+    console.log(`- ${pc.bold(mod.title)} ${pc.yellow(`[${mod.slug}]`)} - ${versionLabel} ${typeLabel}`);
     
     if (mod.isDependency && mod.dependents.length > 0) {
-      console.log(`  ${pc.gray('└─ Wymagany przez: ')}${pc.yellow(mod.dependents.join(', '))}`);
+      console.log(`  ${pc.gray('Required by: ')}${pc.yellow(mod.dependents.join(', '))}`);
     } else if (!mod.isDependency && mod.dependencies.length > 0) {
       const depNames = mod.dependencies.map(depId => {
         const depMod = lock.installed[depId];
         return depMod ? depMod.title : depId;
       });
-      console.log(`  ${pc.gray('└─ Zależy od: ')}${pc.cyan(depNames.join(', '))}`);
+      console.log(`  ${pc.gray('Depends on: ')}${pc.cyan(depNames.join(', '))}`);
     }
   });
   console.log();

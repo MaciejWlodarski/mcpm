@@ -35,7 +35,7 @@ function collectRequiredDependencies(installed) {
 
 function getManagedFilePath(modsDir, filename) {
   if (!filename || filename !== path.basename(filename) || filename === '.' || filename === '..') {
-    throw new Error(`Niebezpieczna nazwa pliku w lockfile: ${filename || '<pusta>'}`);
+    throw new Error(`Unsafe filename in the lockfile: ${filename || '<empty>'}`);
   }
   return path.join(modsDir, filename);
 }
@@ -71,11 +71,11 @@ async function persistState(nextConfig, nextLock, previousConfig, previousLock, 
  */
 export async function removeCommand(slugOrId) {
   if (!slugOrId || slugOrId.trim() === '') {
-    throw new Error('Podaj slug lub ID moda do usunięcia. Przykład: mcpm remove sodium');
+    throw new Error('Provide the slug or ID of the mod to remove. Example: mcpm remove sodium');
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
   const config = await readConfig();
@@ -88,7 +88,7 @@ export async function removeCommand(slugOrId) {
     .find(([id, mod]) => id === slugOrId || mod.slug === slugOrId);
 
   if (!targetEntry) {
-    throw new Error(`Modyfikacja "${slugOrId}" nie jest zainstalowana`);
+    throw new Error(`Mod "${slugOrId}" is not installed`);
   }
 
   const [targetId, targetMod] = targetEntry;
@@ -106,14 +106,14 @@ export async function removeCommand(slugOrId) {
         .map(mod => mod.title)
         .join(', ');
       throw new Error(
-        `Nie można usunąć ${targetMod.title}, ponieważ nadal jest wymagana` +
-        `${dependents ? ` przez: ${dependents}` : ''}`
+        `Cannot remove ${targetMod.title} because it is still required` +
+        `${dependents ? ` by: ${dependents}` : ''}`
       );
     }
 
     await persistState(nextConfig, nextLock, config, lock, projectRoot);
     console.log(pc.green(
-      `${targetMod.title} nie jest już modem bezpośrednim, ale pozostaje zainstalowany jako wymagana zależność.`
+      `${targetMod.title} is no longer a direct mod, but remains installed as a required dependency.`
     ));
     return { removed: [], retainedAsDependency: targetId };
   }
@@ -157,13 +157,13 @@ export async function removeCommand(slugOrId) {
 
     const orphanCount = removedMods.length - 1;
     const orphanLabel = orphanCount === 1
-      ? '1 osieroconą zależność'
-      : `${orphanCount} osierocone zależności`;
+      ? '1 orphaned dependency'
+      : `${orphanCount} orphaned dependencies`;
     console.log(pc.bold(pc.green(
-      `Usunięto ${targetMod.title}${orphanCount > 0 ? ` oraz ${orphanLabel}` : ''}.`
+      `Removed ${targetMod.title}${orphanCount > 0 ? ` and ${orphanLabel}` : ''}.`
     )));
     if (cleanupWarning) {
-      console.warn(pc.yellow(`Ostrzeżenie: nie udało się usunąć katalogu tymczasowego: ${cleanupWarning.message}`));
+      console.warn(pc.yellow(`Warning: failed to remove the temporary directory: ${cleanupWarning.message}`));
     }
     return { removed: removedMods.map(mod => mod.id), retainedAsDependency: null, cleanupWarning };
   } catch (error) {

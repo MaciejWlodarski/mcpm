@@ -51,7 +51,7 @@ export async function readFeatureRegistry() {
     };
   } catch (error) {
     if (error.code === 'ENOENT') return { version: FEATURE_API_VERSION, features: {} };
-    throw new Error(`Nie udało się odczytać rejestru feature'ów MCPM: ${error.message}`, { cause: error });
+    throw new Error(`Failed to read the MCPM feature registry: ${error.message}`, { cause: error });
   }
 }
 
@@ -69,7 +69,7 @@ async function writeFeatureRegistry(registry) {
     } catch (cleanupError) {
       if (cleanupError.code !== 'ENOENT') error.cleanupError ||= cleanupError;
     }
-    throw new Error(`Nie udało się zapisać rejestru feature'ów MCPM: ${error.message}`, { cause: error });
+    throw new Error(`Failed to write the MCPM feature registry: ${error.message}`, { cause: error });
   }
 }
 
@@ -107,7 +107,7 @@ async function runNpm(argumentsList) {
   const executable = npmCli ? process.execPath : 'npm';
   const childArguments = npmCli ? [npmCli, ...argumentsList] : argumentsList;
   if (!npmCli && process.platform === 'win32') {
-    throw new Error('Nie znaleziono npm-cli.js. Zainstaluj npm i spróbuj ponownie.');
+    throw new Error('npm-cli.js was not found. Install npm and try again.');
   }
   return new Promise((resolve, reject) => {
     const child = spawn(executable, childArguments, {
@@ -117,7 +117,7 @@ async function runNpm(argumentsList) {
     child.on('error', reject);
     child.on('exit', code => {
       if (code === 0) resolve();
-      else reject(new Error(`npm zakończył działanie z kodem ${code}`));
+      else reject(new Error(`npm exited with code ${code}`));
     });
   });
 }
@@ -128,16 +128,16 @@ async function readFeaturePackage(packageName) {
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
 
   if (manifest.name !== packageName) {
-    throw new Error(`Zainstalowany pakiet ma nieoczekiwaną nazwę: ${manifest.name}`);
+    throw new Error(`The installed package has an unexpected name: ${manifest.name}`);
   }
   if (manifest.mcpmFeature?.apiVersion !== FEATURE_API_VERSION || !manifest.mcpmFeature?.entry) {
-    throw new Error(`Pakiet ${packageName} nie obsługuje MCPM Feature API v${FEATURE_API_VERSION}`);
+    throw new Error(`Package ${packageName} does not support MCPM Feature API v${FEATURE_API_VERSION}`);
   }
 
   const entryPath = path.resolve(packageDirectory, manifest.mcpmFeature.entry);
   const relativeEntry = path.relative(packageDirectory, entryPath);
   if (relativeEntry.startsWith('..') || path.isAbsolute(relativeEntry)) {
-    throw new Error(`Entry point pakietu ${packageName} wychodzi poza katalog pakietu`);
+    throw new Error(`The ${packageName} entry point is outside the package directory`);
   }
 
   return { manifest, packageDirectory, entryPath };
@@ -145,18 +145,18 @@ async function readFeaturePackage(packageName) {
 
 async function getInstallSpec(featureName, source) {
   const catalogEntry = FEATURE_CATALOG[featureName];
-  if (!catalogEntry) throw new Error(`Nieznany feature MCPM: ${featureName}`);
+  if (!catalogEntry) throw new Error(`Unknown MCPM feature: ${featureName}`);
 
   if (source) {
     const sourcePath = path.resolve(source);
     const manifest = JSON.parse(await fs.readFile(path.join(sourcePath, 'package.json'), 'utf8'));
     if (manifest.name !== catalogEntry.packageName) {
       throw new Error(
-        `Źródło feature'a ${featureName} musi zawierać pakiet ${catalogEntry.packageName}`
+        `The source for feature ${featureName} must contain package ${catalogEntry.packageName}`
       );
     }
     if (manifest.mcpmFeature?.apiVersion !== FEATURE_API_VERSION || !manifest.mcpmFeature?.entry) {
-      throw new Error(`Źródło feature'a ${featureName} nie obsługuje MCPM Feature API v1`);
+      throw new Error(`The source for feature ${featureName} does not support MCPM Feature API v1`);
     }
     return sourcePath;
   }
@@ -171,7 +171,7 @@ async function getInstallSpec(featureName, source) {
 
 export async function installFeature(featureName, options = {}) {
   const catalogEntry = FEATURE_CATALOG[featureName];
-  if (!catalogEntry) throw new Error(`Nieznany feature MCPM: ${featureName}`);
+  if (!catalogEntry) throw new Error(`Unknown MCPM feature: ${featureName}`);
 
   const installSpec = await getInstallSpec(featureName, options.source);
   const featureDirectory = getFeatureDirectory();
@@ -201,10 +201,10 @@ export async function installFeature(featureName, options = {}) {
 export async function uninstallFeature(featureName) {
   const registry = await readFeatureRegistry();
   const installed = registry.features[featureName];
-  if (!installed) throw new Error(`Feature "${featureName}" nie jest zainstalowany`);
+  if (!installed) throw new Error(`Feature "${featureName}" is not installed`);
   const catalogEntry = FEATURE_CATALOG[featureName];
   if (!catalogEntry || installed.packageName !== catalogEntry.packageName) {
-    throw new Error(`Rejestr feature'a ${featureName} wskazuje na niedozwolony pakiet`);
+    throw new Error(`The registry entry for feature ${featureName} points to a disallowed package`);
   }
 
   await runNpm([
@@ -257,12 +257,12 @@ export async function loadInstalledFeatures(program) {
     try {
       const catalogEntry = FEATURE_CATALOG[name];
       if (!catalogEntry || installed.packageName !== catalogEntry.packageName) {
-        throw new Error(`Rejestr feature'a ${name} wskazuje na niedozwolony pakiet`);
+        throw new Error(`The registry entry for feature ${name} points to a disallowed package`);
       }
       const { manifest, entryPath } = await readFeaturePackage(installed.packageName);
       const module = await import(pathToFileURL(entryPath).href);
       if (typeof module.registerFeature !== 'function') {
-        throw new Error(`Pakiet ${installed.packageName} nie eksportuje registerFeature`);
+        throw new Error(`Package ${installed.packageName} does not export registerFeature`);
       }
       await module.registerFeature({ program, api: createFeatureApi() });
       loaded.push({ name, version: manifest.version });

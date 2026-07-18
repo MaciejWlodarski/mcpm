@@ -9,11 +9,11 @@ import { installProjects } from '../installer.js';
  */
 export async function upgradeCommand(newVersion, options = {}) {
   if (!newVersion || newVersion.trim() === '') {
-    throw new Error('Podaj nową wersję Minecraft. Przykład: mcpm upgrade 1.21.1');
+    throw new Error('Provide the new Minecraft version. Example: mcpm upgrade 1.21.1');
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
   const currentConfig = await readConfig();
@@ -21,7 +21,7 @@ export async function upgradeCommand(newVersion, options = {}) {
   const currentLock = await readLock(projectRoot);
 
   if (currentConfig.minecraftVersion === newVersion) {
-    console.log(pc.yellow(`Projekt korzysta już z Minecraft ${newVersion}.`));
+    console.log(pc.yellow(`The project already uses Minecraft ${newVersion}.`));
     return null;
   }
 
@@ -36,8 +36,8 @@ export async function upgradeCommand(newVersion, options = {}) {
   const directMods = Object.keys(nextConfig.mods || {});
 
   console.log(pc.cyan(
-    `Przygotowywanie migracji Minecraft ${currentConfig.minecraftVersion} -> ${newVersion} ` +
-    `dla ${directMods.length} modyfikacji...`
+    `Preparing Minecraft migration ${currentConfig.minecraftVersion} -> ${newVersion} ` +
+    `for ${directMods.length} mods...`
   ));
 
   const result = await installProjects(directMods, options, {
@@ -50,12 +50,12 @@ export async function upgradeCommand(newVersion, options = {}) {
     projectRoot
   });
   if (result.cleanupWarning) {
-    console.warn(pc.yellow(`Ostrzeżenie: nie udało się usunąć katalogu tymczasowego: ${result.cleanupWarning.message}`));
+    console.warn(pc.yellow(`Warning: failed to remove the temporary directory: ${result.cleanupWarning.message}`));
   }
 
   console.log(pc.bold(pc.green(
-    `Migracja do Minecraft ${newVersion} zakończona sukcesem ` +
-    `(pobrano: ${result.downloaded}, usunięto: ${result.removed}).`
+    `Migration to Minecraft ${newVersion} completed successfully ` +
+    `(downloaded: ${result.downloaded}, removed: ${result.removed}).`
   )));
   return result;
 }

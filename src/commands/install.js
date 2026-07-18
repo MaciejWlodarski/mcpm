@@ -9,26 +9,26 @@ import { installProjects } from '../installer.js';
  */
 export async function installCommand(slugOrId, options = {}) {
   if (!slugOrId || slugOrId.trim() === '') {
-    throw new Error('Podaj slug lub ID moda do zainstalowania. Przykład: mcpm install sodium');
+    throw new Error('Provide the slug or ID of the mod to install. Example: mcpm install sodium');
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
-  console.log(pc.cyan(`Rozwiązywanie zależności dla: ${pc.bold(slugOrId)}...`));
+  console.log(pc.cyan(`Resolving dependencies for ${pc.bold(slugOrId)}...`));
   const result = await installProjects([slugOrId], options);
   if (result.cleanupWarning) {
-    console.warn(pc.yellow(`Ostrzeżenie: nie udało się usunąć katalogu tymczasowego: ${result.cleanupWarning.message}`));
+    console.warn(pc.yellow(`Warning: failed to remove the temporary directory: ${result.cleanupWarning.message}`));
   }
 
   if (result.downloaded === 0 && result.removed === 0) {
-    console.log(pc.green('Modyfikacja i jej zależności są już aktualne.'));
+    console.log(pc.green('The mod and its dependencies are already up to date.'));
     return result;
   }
 
   console.log(pc.bold(pc.green(
-    `Instalacja zakończona sukcesem (pobrano: ${result.downloaded}, usunięto: ${result.removed}).`
+    `Installation completed successfully (downloaded: ${result.downloaded}, removed: ${result.removed}).`
   )));
   return result;
 }

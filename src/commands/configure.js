@@ -10,14 +10,14 @@ import {
 
 function parseBooleanSetting(value) {
   const normalized = String(value).trim().toLowerCase();
-  if (['on', 'true', 'yes', 'tak', '1'].includes(normalized)) return true;
-  if (['off', 'false', 'no', 'nie', '0'].includes(normalized)) return false;
-  throw new Error('Wartość --beta musi być jedną z: on, off');
+  if (['on', 'true', 'yes', '1'].includes(normalized)) return true;
+  if (['off', 'false', 'no', '0'].includes(normalized)) return false;
+  throw new Error('The --beta value must be one of: on, off');
 }
 
 export async function configCommand(options = {}) {
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
   const config = await readConfig();
@@ -25,8 +25,8 @@ export async function configCommand(options = {}) {
   const lock = await readLock(projectRoot);
 
   if (options.beta === undefined) {
-    console.log(pc.bold('Konfiguracja bieżącego projektu MCPM:'));
-    console.log(`  Projekt:   ${pc.cyan(projectRoot)}`);
+    console.log(pc.bold('Current MCPM project configuration:'));
+    console.log(`  Project:   ${pc.cyan(projectRoot)}`);
     console.log(`  Minecraft: ${pc.cyan(config.minecraftVersion)}`);
     console.log(`  Loader:    ${pc.cyan(config.loader)}`);
     console.log(`  Beta:      ${config.allowBeta ? pc.green('on') : pc.yellow('off')}`);
@@ -51,7 +51,7 @@ export async function configCommand(options = {}) {
   }
 
   console.log(pc.green(
-    `Wersje beta dla projektu ${pc.bold(projectRoot)}: ${allowBeta ? 'włączone' : 'wyłączone'}.`
+    `Beta releases for project ${pc.bold(projectRoot)}: ${allowBeta ? 'enabled' : 'disabled'}.`
   ));
   return nextConfig;
 }

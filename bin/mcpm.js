@@ -27,99 +27,99 @@ program
 
 program
   .command('init')
-  .description('Zainicjalizuj projekt mcpm w obecnym katalogu')
+  .description('Initialize an MCPM project in the current directory')
   .action(initCommand);
 
 program
   .command('search <query>')
-  .description('Wyszukaj modyfikacje na platformie Modrinth')
+  .description('Search for mods on Modrinth')
   .action(searchCommand);
 
 program
   .command('use <project>')
-  .description('Ustaw aktywny projekt MCPM według nazwy lub ścieżki')
+  .description('Set the active MCPM project by name or path')
   .action(useCommand);
 
 program
   .command('projects')
-  .description('Wyświetl zarejestrowane projekty MCPM')
+  .description('Show registered MCPM projects')
   .action(projectsCommand);
 
 program
   .command('current')
-  .description('Wyświetl projekt używany przez polecenia MCPM w tym katalogu')
+  .description('Show the MCPM project used in the current directory')
   .action(currentCommand);
 
 program
   .command('forget <project>')
-  .description('Usuń projekt z rejestru bez usuwania jego plików')
+  .description('Remove a project from the registry without deleting its files')
   .action(forgetCommand);
 
 program
   .command('config')
-  .description('Wyświetl lub zmień ustawienia bieżącego projektu')
-  .option('--beta <on|off>', 'Trwale włącz lub wyłącz wersje beta dla projektu')
+  .description('Show or change the current project settings')
+  .option('--beta <on|off>', 'Persistently enable or disable beta releases for the project')
   .action(configCommand);
 
 const featureCommand = program
   .command('feature')
-  .description('Zarządzaj opcjonalnymi feature’ami MCPM');
+  .description('Manage optional MCPM features');
 
 featureCommand
   .command('list')
-  .description('Wyświetl dostępne i zainstalowane feature’y')
+  .description('Show available and installed features')
   .action(featureListCommand);
 
 featureCommand
   .command('install <name>')
-  .description('Zainstaluj opcjonalny feature MCPM')
-  .option('--source <path>', 'Użyj lokalnego źródła pakietu podczas developmentu')
+  .description('Install an optional MCPM feature')
+  .option('--source <path>', 'Use a local package source during development')
   .action(featureInstallCommand);
 
 featureCommand
   .command('uninstall <name>')
-  .description('Odinstaluj opcjonalny feature MCPM')
+  .description('Uninstall an optional MCPM feature')
   .action(featureUninstallCommand);
 
 program
   .command('install <slug>')
   .alias('add')
-  .option('-b, --beta', 'Dopuść wersje próbne (beta)')
-  .description('Zainstaluj modyfikację oraz jej wymagane zależności')
+  .option('-b, --beta', 'Allow beta releases')
+  .description('Install a mod and its required dependencies')
   .action(installCommand);
 
 program
   .command('remove <slug>')
   .alias('uninstall')
-  .description('Usuń modyfikację oraz jej osierocone zależności')
+  .description('Remove a mod and its orphaned dependencies')
   .action(removeCommand);
 
 program
   .command('update')
-  .option('-b, --beta', 'Dopuść wersje próbne (beta) podczas aktualizacji')
-  .description('Zaktualizuj wszystkie mody dla bieżącej wersji Minecraft')
+  .option('-b, --beta', 'Allow beta releases during updates')
+  .description('Update all mods for the current Minecraft version')
   .action((options) => updateCommand(options));
 
 program
   .command('list')
   .alias('ls')
-  .description('Wyświetl listę wszystkich zainstalowanych modyfikacji')
+  .description('List all installed mods')
   .action(listCommand);
 
 program
   .command('upgrade <version>')
-  .option('-b, --beta', 'Dopuść wersje próbne (beta) dla nowej wersji gry')
-  .description('Zmień wersję Minecraft projektu i przeinstaluj modyfikacje')
+  .option('-b, --beta', 'Allow beta releases for the new game version')
+  .description('Change the project Minecraft version and reinstall its mods')
   .action((version, options) => upgradeCommand(version, options));
 
 const featureLoadResult = await loadInstalledFeatures(program);
 for (const failure of featureLoadResult.failures) {
-  console.warn(pc.yellow(`Nie udało się załadować feature’a ${failure.name}: ${failure.message}`));
+  console.warn(pc.yellow(`Failed to load feature ${failure.name}: ${failure.message}`));
 }
 
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
-  console.error(pc.red(`\nBłąd: ${error.message}`));
+  console.error(pc.red(`\nError: ${error.message}`));
   process.exitCode = 1;
 }

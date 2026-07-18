@@ -16,7 +16,7 @@ export async function downloadFile(url, destDir, filename) {
   // Ensure the destination folder exists
   await fs.mkdir(destDir, { recursive: true });
   
-  const spinner = ora(`Pobieranie ${pc.cyan(filename)}...`).start();
+  const spinner = ora(`Downloading ${pc.cyan(filename)}...`).start();
   
   try {
     const response = await fetch(url, {
@@ -33,10 +33,10 @@ export async function downloadFile(url, destDir, filename) {
     const buffer = Buffer.from(arrayBuffer);
     await fs.writeFile(destPath, buffer);
     
-    spinner.succeed(`Pobrano ${pc.green(filename)}`);
+    spinner.succeed(`Downloaded ${pc.green(filename)}`);
     return destPath;
   } catch (err) {
-    spinner.fail(`Błąd pobierania ${pc.red(filename)}: ${err.message}`);
+    spinner.fail(`Failed to download ${pc.red(filename)}: ${err.message}`);
     throw err;
   }
 }

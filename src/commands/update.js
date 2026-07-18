@@ -13,7 +13,7 @@ export async function updateProjects(directMods, options = {}, installer = insta
   };
 
   for (const [index, slug] of directMods.entries()) {
-    console.log(pc.cyan(`\n[${index + 1}/${directMods.length}] Aktualizacja ${pc.bold(slug)}...`));
+    console.log(pc.cyan(`\n[${index + 1}/${directMods.length}] Updating ${pc.bold(slug)}...`));
 
     try {
       const result = await installer([slug], options);
@@ -22,21 +22,21 @@ export async function updateProjects(directMods, options = {}, installer = insta
 
       if (result.cleanupWarning) {
         console.warn(pc.yellow(
-          `Ostrzeżenie dla ${slug}: nie udało się usunąć katalogu tymczasowego: ` +
+          `Warning for ${slug}: failed to remove the temporary directory: ` +
           result.cleanupWarning.message
         ));
       }
 
       if (result.downloaded === 0 && result.removed === 0) {
         summary.unchanged += 1;
-        console.log(pc.gray(`${slug} jest aktualny.`));
+        console.log(pc.gray(`${slug} is up to date.`));
       } else {
         summary.updated += 1;
-        console.log(pc.green(`${slug} zaktualizowany.`));
+        console.log(pc.green(`${slug} was updated.`));
       }
     } catch (error) {
       summary.failures.push({ slug, message: error.message });
-      console.error(pc.yellow(`Pominięto ${slug}: ${error.message}`));
+      console.error(pc.yellow(`Skipped ${slug}: ${error.message}`));
     }
   }
 
@@ -49,36 +49,36 @@ export async function updateProjects(directMods, options = {}, installer = insta
  */
 export async function updateCommand(options = {}) {
   if (!(await isInitialized())) {
-    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
+    throw new Error('No MCPM project found. Use "mcpm use <project>" or "mcpm init"');
   }
 
   const config = await readConfig();
   const directMods = Object.keys(config.mods || {});
 
   if (directMods.length === 0) {
-    console.log(pc.yellow('Brak zainstalowanych modyfikacji do zaktualizowania.'));
+    console.log(pc.yellow('There are no installed mods to update.'));
     return null;
   }
 
   console.log(pc.cyan(
-    `Sprawdzanie aktualizacji ${directMods.length} modyfikacji` +
-    `${options.beta || config.allowBeta ? ' (beta dozwolone)' : ''}...`
+    `Checking updates for ${directMods.length} mods` +
+    `${options.beta || config.allowBeta ? ' (beta allowed)' : ''}...`
   ));
 
   const summary = await updateProjects(directMods, options);
-  console.log('\n' + pc.bold('Podsumowanie aktualizacji:'));
-  console.log(`  Zaktualizowane: ${pc.green(summary.updated)}`);
-  console.log(`  Już aktualne:   ${pc.cyan(summary.unchanged)}`);
-  console.log(`  Pominięte:      ${summary.failures.length ? pc.yellow(summary.failures.length) : '0'}`);
+  console.log('\n' + pc.bold('Update summary:'));
+  console.log(`  Updated:          ${pc.green(summary.updated)}`);
+  console.log(`  Already current:  ${pc.cyan(summary.unchanged)}`);
+  console.log(`  Skipped:          ${summary.failures.length ? pc.yellow(summary.failures.length) : '0'}`);
 
   if (summary.failures.length > 0) {
-    console.log(pc.yellow('\nNie udało się zaktualizować:'));
+    console.log(pc.yellow('\nFailed to update:'));
     for (const failure of summary.failures) {
       console.log(`  - ${failure.slug}: ${failure.message}`);
     }
     process.exitCode = 1;
   } else {
-    console.log(pc.bold(pc.green('\nAktualizacja zakończona sukcesem.')));
+    console.log(pc.bold(pc.green('\nUpdate completed successfully.')));
   }
 
   return summary;

@@ -71,7 +71,7 @@ test.afterEach(async () => {
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
 });
 
-test('nie wybiera wersji beta, gdy beta jest wyłączona', () => {
+test('does not select a beta version when beta support is disabled', () => {
   const beta = {
     id: 'beta-version',
     version_number: '2.0.0-beta',
@@ -82,16 +82,16 @@ test('nie wybiera wersji beta, gdy beta jest wyłączona', () => {
 
   assert.throws(
     () => selectCompatibleVersion([beta], '1.21.1', 'fabric', false),
-    /Brak wersji typu release/
+    /No release version is available/
   );
   assert.equal(selectCompatibleVersion([beta], '1.21.1', 'fabric', true), beta);
 });
 
-test('CLI rozdziela update modów od upgrade wersji Minecraft', () => {
+test('CLI separates mod updates from Minecraft version upgrades', () => {
   const result = spawnSync(process.execPath, [cliPath, '--help'], { encoding: 'utf8' });
 
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /update \[options\]\s+Zaktualizuj wszystkie mody/);
+  assert.match(result.stdout, /update \[options\]\s+Update all mods/);
   assert.match(result.stdout, /upgrade \[options\] <version>/);
   assert.doesNotMatch(result.stdout, /upgrade-mc|update\|upgrade/);
   assert.match(result.stdout, /use <project>/);
@@ -101,7 +101,7 @@ test('CLI rozdziela update modów od upgrade wersji Minecraft', () => {
   assert.match(result.stdout, /config \[options\]/);
 });
 
-test('ustawienie beta jest trwale zapisywane w configu i lockfile projektu', async () => {
+test('beta setting is persisted in the project configuration and lock file', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   await createProjectState({
     minecraftVersion: '1.21.1',
@@ -126,12 +126,12 @@ test('ustawienie beta jest trwale zapisywane w configu i lockfile projektu', asy
   await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
 });
 
-test('update pomija niekompatybilny mod i aktualizuje pozostałe', async () => {
+test('update skips an incompatible mod and updates the remaining mods', async () => {
   const calls = [];
   const installer = async ([slug]) => {
     calls.push(slug);
     if (slug === 'firmament') {
-      throw new Error('Brak kompatybilnej wersji');
+      throw new Error('No compatible version');
     }
     if (slug === 'sodium') return { downloaded: 1, removed: 1, cleanupWarning: null };
     return { downloaded: 0, removed: 0, cleanupWarning: null };
@@ -144,11 +144,11 @@ test('update pomija niekompatybilny mod i aktualizuje pozostałe', async () => {
   assert.equal(summary.unchanged, 1);
   assert.deepEqual(summary.failures, [{
     slug: 'firmament',
-    message: 'Brak kompatybilnej wersji'
+    message: 'No compatible version'
   }]);
 });
 
-test('opcjonalny launcher można zainstalować, załadować i odinstalować', async () => {
+test('the optional launcher can be installed, loaded, and uninstalled', async () => {
   assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
 
   const installed = await installFeature('launcher', { source: launcherFeaturePath });
@@ -170,7 +170,7 @@ test('opcjonalny launcher można zainstalować, załadować i odinstalować', as
   assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
 });
 
-test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async () => {
+test('the active project allows configuration reads from any directory', async () => {
   const firstRoot = path.join(temporaryDirectory, 'first');
   const secondRoot = path.join(temporaryDirectory, 'second');
   const outside = path.join(temporaryDirectory, 'outside');
@@ -196,7 +196,7 @@ test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async
   );
 });
 
-test('CLI wykonuje list na aktywnym projekcie spoza jego katalogu', async () => {
+test('CLI lists the active project from outside its directory', async () => {
   const projectRoot = path.join(temporaryDirectory, 'project');
   const outside = path.join(temporaryDirectory, 'outside');
   await fs.mkdir(outside, { recursive: true });
@@ -223,7 +223,7 @@ test('CLI wykonuje list na aktywnym projekcie spoza jego katalogu', async () => 
   assert.ok(result.stdout.includes(path.join(projectRoot, 'mods')));
 });
 
-test('projekt lokalny ma pierwszeństwo przed projektem globalnie aktywnym', async () => {
+test('a local project takes precedence over the globally active project', async () => {
   const localRoot = path.join(temporaryDirectory, 'local');
   const activeRoot = path.join(temporaryDirectory, 'active');
   const localSubdirectory = path.join(localRoot, 'config', 'nested');
@@ -244,7 +244,7 @@ test('projekt lokalny ma pierwszeństwo przed projektem globalnie aktywnym', asy
   assert.equal(getProjectRootForConfig(config), localRoot);
 });
 
-test('MCPM_PROJECT jednorazowo zastępuje projekt lokalny i globalnie aktywny', async () => {
+test('MCPM_PROJECT overrides the local and globally active projects', async () => {
   const localRoot = path.join(temporaryDirectory, 'local');
   const overrideRoot = path.join(temporaryDirectory, 'override');
   await writeConfig({
@@ -262,7 +262,7 @@ test('MCPM_PROJECT jednorazowo zastępuje projekt lokalny i globalnie aktywny', 
   assert.equal(getProjectRootForConfig(config), overrideRoot);
 });
 
-test('projekt można usunąć z rejestru bez usuwania jego plików', async () => {
+test('a project can be removed from the registry without deleting its files', async () => {
   const projectRoot = path.join(temporaryDirectory, 'registered');
   await writeConfig({
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
@@ -275,7 +275,7 @@ test('projekt można usunąć z rejestru bez usuwania jego plików', async () =>
   assert.equal((await readConfig(projectRoot)).minecraftVersion, '1.21.1');
 });
 
-test('resolver respektuje dokładne version_id wymaganej zależności', async () => {
+test('the resolver honors an exact version_id for a required dependency', async () => {
   const projects = {
     root: { id: 'root', slug: 'root', title: 'Root' },
     dependency: { id: 'dependency', slug: 'dependency', title: 'Dependency' }
@@ -329,7 +329,7 @@ test('resolver respektuje dokładne version_id wymaganej zależności', async ()
   assert.equal(genericDependencyLookup, false);
 });
 
-test('resolver przerywa instalację, gdy brakuje wymaganej zależności', async () => {
+test('the resolver stops installation when a required dependency is unavailable', async () => {
   const projects = {
     root: { id: 'root', slug: 'root', title: 'Root' },
     missing: { id: 'missing', slug: 'missing', title: 'Missing' }
@@ -346,7 +346,7 @@ test('resolver przerywa instalację, gdy brakuje wymaganej zależności', async 
   };
   const services = {
     getProject: async id => projects[id],
-    getVersion: async () => assert.fail('getVersion nie powinno zostać wywołane'),
+    getVersion: async () => assert.fail('getVersion should not be called'),
     getProjectVersions: async id => id === 'root' ? [rootVersion] : []
   };
 
@@ -356,11 +356,11 @@ test('resolver przerywa instalację, gdy brakuje wymaganej zależności', async 
       loader: 'fabric',
       allowBeta: false
     }, {}, services),
-    /Nie znaleziono kompatybilnej wersji dla Missing/
+    /No compatible version found for Missing/
   );
 });
 
-test('awaria pobierania nie usuwa poprzedniego JAR-a ani lockfile', async () => {
+test('a download failure preserves the previous JAR and lock file', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   const config = {
     minecraftVersion: '1.21.1',
@@ -411,7 +411,7 @@ test('awaria pobierania nie usuwa poprzedniego JAR-a ani lockfile', async () => 
   await assert.rejects(fs.access(path.join(modsDir, 'new.jar')), { code: 'ENOENT' });
 });
 
-test('udana instalacja podmienia pliki i zapisuje nowy stan', async () => {
+test('a successful installation replaces files and saves the new state', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   const config = {
     minecraftVersion: '1.21.1',
@@ -458,7 +458,7 @@ test('udana instalacja podmienia pliki i zapisuje nowy stan', async () => {
   );
 });
 
-test('remove zachowuje bezpośredni mod, jeśli nadal jest wymaganą zależnością', async () => {
+test('remove retains a direct mod when it is still a required dependency', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   const config = {
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir, allowBeta: false,
@@ -489,7 +489,7 @@ test('remove zachowuje bezpośredni mod, jeśli nadal jest wymaganą zależnośc
   assert.equal(await fs.readFile(path.join(modsDir, 'shared.jar'), 'utf8'), 'shared');
 });
 
-test('remove odmawia usunięcia zależności nadal wymaganej przez mod', async () => {
+test('remove refuses to delete a dependency that another mod still requires', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   const config = {
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir, allowBeta: false,
@@ -511,12 +511,12 @@ test('remove odmawia usunięcia zależności nadal wymaganej przez mod', async (
   await createProjectState(config, lock);
   await fs.writeFile(path.join(modsDir, 'shared.jar'), 'shared');
 
-  await assert.rejects(removeCommand('shared'), /nadal jest wymagana/);
+  await assert.rejects(removeCommand('shared'), /still required/);
   assert.ok((await readLock()).installed.shared);
   assert.equal(await fs.readFile(path.join(modsDir, 'shared.jar'), 'utf8'), 'shared');
 });
 
-test('remove usuwa mod bezpośredni wraz z osieroconą zależnością', async () => {
+test('remove deletes a direct mod together with its orphaned dependency', async () => {
   const modsDir = path.join(temporaryDirectory, 'mods');
   const config = {
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir, allowBeta: false,

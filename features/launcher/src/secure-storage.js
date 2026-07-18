@@ -42,7 +42,7 @@ function runPowerShell(script, input) {
     child.on('error', reject);
     child.on('exit', code => {
       if (code === 0) resolve(stdout.trim());
-      else reject(new Error(stderr.trim() || `PowerShell zakończył działanie z kodem ${code}`));
+      else reject(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
     });
     child.stdin.end(input, 'utf8');
   });
@@ -50,14 +50,14 @@ function runPowerShell(script, input) {
 
 async function protect(value) {
   if (process.platform !== 'win32') {
-    throw new Error('Bezpieczne przechowywanie konta launchera jest obecnie obsługiwane tylko na Windows.');
+    throw new Error('Secure launcher account storage is currently supported only on Windows.');
   }
   return runPowerShell(PROTECT_SCRIPT, value);
 }
 
 async function unprotect(value) {
   if (process.platform !== 'win32') {
-    throw new Error('Bezpieczne przechowywanie konta launchera jest obecnie obsługiwane tylko na Windows.');
+    throw new Error('Secure launcher account storage is currently supported only on Windows.');
   }
   return runPowerShell(UNPROTECT_SCRIPT, value);
 }
@@ -89,7 +89,7 @@ export async function readSession(stateDirectory, options = {}) {
     return JSON.parse(await unprotectValue(encrypted.trim()));
   } catch (error) {
     if (error.code === 'ENOENT') return null;
-    throw new Error(`Nie udało się odczytać zapisanej sesji launchera: ${error.message}`, { cause: error });
+    throw new Error(`Could not read the saved launcher session: ${error.message}`, { cause: error });
   }
 }
 
