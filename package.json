@@ -13,7 +13,7 @@
   "scripts": {
     "start": "node ./bin/mcpm.js",
     "test": "node --test --test-concurrency=1",
-    "check": "node --check ./bin/mcpm.js && node --check ./src/api.js && node --check ./src/config.js && node --check ./src/downloader.js && node --check ./src/installer.js && node --check ./src/versioning.js && node ./bin/mcpm.js --help"
+    "check": "node --check ./bin/mcpm.js && node --check ./src/api.js && node --check ./src/config.js && node --check ./src/downloader.js && node --check ./src/installer.js && node --check ./src/versioning.js && node --check ./features/launcher/src/auth.js && node --check ./features/launcher/src/secure-storage.js && node --check ./features/launcher/src/index.js && node ./bin/mcpm.js --help"
   },
   "engines": {
     "node": ">=18"
@@ -25,8 +25,16 @@
     "manager",
     "cli"
   ],
-  "author": "",
+  "author": "Maciej Wlodarski",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MaciejWlodarski/mcpm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MaciejWlodarski/mcpm/issues"
+  },
+  "homepage": "https://github.com/MaciejWlodarski/mcpm#readme",
   "dependencies": {
     "@clack/prompts": "^0.9.1",
     "commander": "^13.1.0",

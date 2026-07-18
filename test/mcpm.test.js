@@ -153,13 +153,18 @@ test('opcjonalny launcher można zainstalować, załadować i odinstalować', as
 
   const installed = await installFeature('launcher', { source: launcherFeaturePath });
   assert.equal(installed.name, 'launcher');
-  assert.equal(installed.version, '0.1.0');
+  assert.equal(installed.version, '0.2.1');
 
   const program = new Command();
   const loaded = await loadInstalledFeatures(program);
   assert.deepEqual(loaded.failures, []);
-  assert.deepEqual(loaded.loaded, [{ name: 'launcher', version: '0.1.0' }]);
+  assert.deepEqual(loaded.loaded, [{ name: 'launcher', version: '0.2.1' }]);
   assert.ok(program.commands.some(command => command.name() === 'launcher'));
+  const launcher = program.commands.find(command => command.name() === 'launcher');
+  assert.deepEqual(
+    launcher.commands.map(command => command.name()),
+    ['status', 'login', 'account', 'logout']
+  );
 
   await uninstallFeature('launcher');
   assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);

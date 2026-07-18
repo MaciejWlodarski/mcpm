@@ -4,3 +4,6 @@ mods/
 mcpm.json
 mcpm-lock.json
 .mcpm-staging-*/
+.env
+*.dpapi
+microsoft_accounts.json

@@ -1,6 +1,6 @@
 {
   "name": "@mcpm/feature-launcher",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Optional direct Minecraft launcher feature for MCPM",
   "type": "module",
   "files": [
