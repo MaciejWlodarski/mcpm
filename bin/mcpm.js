@@ -8,6 +8,7 @@ import { removeCommand } from '../src/commands/remove.js';
 import { updateCommand } from '../src/commands/update.js';
 import { listCommand } from '../src/commands/list.js';
 import { upgradeCommand } from '../src/commands/upgrade.js';
+import { currentCommand, forgetCommand, projectsCommand, useCommand } from '../src/commands/projects.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -26,6 +27,26 @@ program
   .command('search <query>')
   .description('Wyszukaj modyfikacje na platformie Modrinth')
   .action(searchCommand);
+
+program
+  .command('use <project>')
+  .description('Ustaw aktywny projekt MCPM według nazwy lub ścieżki')
+  .action(useCommand);
+
+program
+  .command('projects')
+  .description('Wyświetl zarejestrowane projekty MCPM')
+  .action(projectsCommand);
+
+program
+  .command('current')
+  .description('Wyświetl projekt używany przez polecenia MCPM w tym katalogu')
+  .action(currentCommand);
+
+program
+  .command('forget <project>')
+  .description('Usuń projekt z rejestru bez usuwania jego plików')
+  .action(forgetCommand);
 
 program
   .command('install <slug>')

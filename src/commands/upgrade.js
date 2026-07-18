@@ -1,5 +1,5 @@
 import pc from 'picocolors';
-import { isInitialized, readConfig, readLock } from '../config.js';
+import { getProjectRootForConfig, isInitialized, readConfig, readLock } from '../config.js';
 import { installProjects } from '../installer.js';
 
 /**
@@ -13,11 +13,12 @@ export async function upgradeCommand(newVersion, options = {}) {
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Projekt nie jest zainicjalizowany. Uruchom najpierw "mcpm init"');
+    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
   }
 
   const currentConfig = await readConfig();
-  const currentLock = await readLock();
+  const projectRoot = getProjectRootForConfig(currentConfig);
+  const currentLock = await readLock(projectRoot);
 
   if (currentConfig.minecraftVersion === newVersion) {
     console.log(pc.yellow(`Projekt korzysta już z Minecraft ${newVersion}.`));
@@ -45,7 +46,8 @@ export async function upgradeCommand(newVersion, options = {}) {
     previousLock: currentLock,
     persistedConfig: currentConfig,
     persistedLock: currentLock,
-    removeAllPrevious: true
+    removeAllPrevious: true,
+    projectRoot
   });
   if (result.cleanupWarning) {
     console.warn(pc.yellow(`Ostrzeżenie: nie udało się usunąć katalogu tymczasowego: ${result.cleanupWarning.message}`));

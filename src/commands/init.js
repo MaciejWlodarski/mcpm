@@ -2,6 +2,7 @@ import { intro, outro, select, text, confirm, isCancel, spinner } from '@clack/p
 import pc from 'picocolors';
 import { getGameVersions } from '../api.js';
 import { writeConfig, writeLock } from '../config.js';
+import { registerProject } from '../projects.js';
 
 /**
  * Executes the `mcpm init` command to interactively create configuration files.
@@ -127,8 +128,13 @@ export async function initCommand() {
     installed: {}
   };
 
-  await writeConfig(config);
-  await writeLock(lock);
+  const projectRoot = process.cwd();
+  await writeConfig(config, projectRoot);
+  await writeLock(lock, projectRoot);
+  const registered = await registerProject(projectRoot);
 
-  outro(pc.green('Projekt MCPM pomyślnie zainicjalizowany! Stworzono mcpm.json oraz mcpm-lock.json.'));
+  outro(pc.green(
+    `Projekt MCPM "${registered.name}" zainicjalizowany i ustawiony jako aktywny. ` +
+    'Stworzono mcpm.json oraz mcpm-lock.json.'
+  ));
 }

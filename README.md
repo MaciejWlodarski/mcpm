@@ -6,10 +6,27 @@ MCPM to prosty menedżer modów Minecraft korzystający z API Modrinth.
 
 - Node.js 18 lub nowszy
 
+## Instalacja polecenia globalnego
+
+W katalogu repozytorium uruchom:
+
+```text
+npm install
+npm link
+```
+
+Po `npm link` polecenie `mcpm` jest dostępne w terminalu niezależnie od
+bieżącego katalogu. Link wskazuje na ten katalog roboczy, więc kolejne lokalne
+zmiany kodu nie wymagają ponownej instalacji.
+
 ## Użycie
 
 ```text
 mcpm init
+mcpm use <nazwa-lub-ścieżka>
+mcpm projects
+mcpm current
+mcpm forget <nazwa-lub-ścieżka>
 mcpm search <fraza>
 mcpm install <slug>
 mcpm remove <slug>
@@ -17,6 +34,32 @@ mcpm update
 mcpm upgrade <wersja>
 mcpm list
 ```
+
+## Projekty i uruchamianie z dowolnego katalogu
+
+Każdy projekt utworzony przez `mcpm init` jest automatycznie rejestrowany i
+ustawiany jako aktywny. Dzięki temu pozostałe polecenia można uruchamiać z
+dowolnego katalogu.
+
+```text
+mcpm projects
+mcpm use moj-modpack
+mcpm use D:\Minecraft\modpacks\survival
+```
+
+`projects` pokazuje wszystkie znane projekty i oznacza aktywny zieloną kropką.
+`use` przełącza aktywny projekt; podanie ścieżki do nowego projektu jednocześnie
+go rejestruje. `current` pokazuje projekt, którego faktycznie użyje bieżący
+katalog. `forget` usuwa wyłącznie wpis z globalnego rejestru — nie usuwa
+konfiguracji, lockfile ani modów.
+
+Jeżeli polecenie zostanie uruchomione wewnątrz katalogu projektu MCPM lub jego
+podkatalogu, lokalny projekt ma pierwszeństwo przed globalnie aktywnym. Można też
+jednorazowo wymusić projekt zmienną środowiskową `MCPM_PROJECT`; ma ona najwyższy
+priorytet.
+
+Rejestr jest przechowywany w `~/.mcpm/projects.json`. Na potrzeby automatyzacji
+lokalizację katalogu stanu można zmienić przez `MCPM_STATE_DIR`.
 
 `update` aktualizuje wszystkie bezpośrednio zadeklarowane mody dla bieżącej
 wersji Minecrafta.

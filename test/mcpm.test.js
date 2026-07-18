@@ -7,17 +7,32 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { resolveInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
-import { readConfig, readLock, writeConfig, writeLock } from '../src/config.js';
+import {
+  getProjectRootForConfig,
+  readConfig,
+  readLock,
+  resolveModsDir,
+  writeConfig,
+  writeLock
+} from '../src/config.js';
 import { removeCommand } from '../src/commands/remove.js';
+import {
+  forgetProject,
+  listProjects,
+  registerProject,
+  setActiveProject
+} from '../src/projects.js';
 
 const originalCwd = process.cwd();
 const cliPath = fileURLToPath(new URL('../bin/mcpm.js', import.meta.url));
 let temporaryDirectory;
 let originalFetch;
+let originalStateDirectory;
+let originalProjectOverride;
 
 async function createProjectState(config, lock) {
-  await writeConfig(config);
-  await writeLock(lock);
+  await writeConfig(config, process.cwd());
+  await writeLock(lock, process.cwd());
   await fs.mkdir(config.modsDir, { recursive: true });
 }
 
@@ -25,10 +40,18 @@ test.beforeEach(async () => {
   temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-test-'));
   process.chdir(temporaryDirectory);
   originalFetch = globalThis.fetch;
+  originalStateDirectory = process.env.MCPM_STATE_DIR;
+  originalProjectOverride = process.env.MCPM_PROJECT;
+  process.env.MCPM_STATE_DIR = path.join(temporaryDirectory, 'state');
+  delete process.env.MCPM_PROJECT;
 });
 
 test.afterEach(async () => {
   globalThis.fetch = originalFetch;
+  if (originalStateDirectory === undefined) delete process.env.MCPM_STATE_DIR;
+  else process.env.MCPM_STATE_DIR = originalStateDirectory;
+  if (originalProjectOverride === undefined) delete process.env.MCPM_PROJECT;
+  else process.env.MCPM_PROJECT = originalProjectOverride;
   process.chdir(originalCwd);
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
 });
@@ -56,6 +79,115 @@ test('CLI rozdziela update modów od upgrade wersji Minecraft', () => {
   assert.match(result.stdout, /update \[options\]\s+Zaktualizuj wszystkie mody/);
   assert.match(result.stdout, /upgrade \[options\] <version>/);
   assert.doesNotMatch(result.stdout, /upgrade-mc|update\|upgrade/);
+  assert.match(result.stdout, /use <project>/);
+  assert.match(result.stdout, /projects/);
+  assert.match(result.stdout, /current/);
+  assert.match(result.stdout, /forget <project>/);
+});
+
+test('aktywny projekt pozwala czytać konfigurację z dowolnego katalogu', async () => {
+  const firstRoot = path.join(temporaryDirectory, 'first');
+  const secondRoot = path.join(temporaryDirectory, 'second');
+  const outside = path.join(temporaryDirectory, 'outside');
+  await fs.mkdir(outside, { recursive: true });
+
+  await writeConfig({
+    minecraftVersion: '1.20.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, firstRoot);
+  await writeConfig({
+    minecraftVersion: '1.21.1', loader: 'neoforge', modsDir: './mods', mods: {}
+  }, secondRoot);
+  await registerProject(firstRoot, { name: 'first' });
+  await registerProject(secondRoot, { name: 'second' });
+  process.chdir(outside);
+
+  assert.equal((await readConfig()).minecraftVersion, '1.21.1');
+  await setActiveProject('first');
+  const firstConfig = await readConfig();
+  assert.equal(firstConfig.minecraftVersion, '1.20.1');
+  assert.equal(
+    resolveModsDir(firstConfig, getProjectRootForConfig(firstConfig)),
+    path.join(firstRoot, 'mods')
+  );
+});
+
+test('CLI wykonuje list na aktywnym projekcie spoza jego katalogu', async () => {
+  const projectRoot = path.join(temporaryDirectory, 'project');
+  const outside = path.join(temporaryDirectory, 'outside');
+  await fs.mkdir(outside, { recursive: true });
+  await writeConfig({
+    minecraftVersion: '1.21.1',
+    loader: 'fabric',
+    modsDir: './mods',
+    allowBeta: false,
+    mods: {}
+  }, projectRoot);
+  await writeLock({
+    minecraftVersion: '1.21.1', loader: 'fabric', allowBeta: false, installed: {}
+  }, projectRoot);
+  await registerProject(projectRoot, { name: 'project' });
+
+  const result = spawnSync(process.execPath, [cliPath, 'list'], {
+    cwd: outside,
+    encoding: 'utf8',
+    env: process.env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Minecraft: 1\.21\.1/);
+  assert.ok(result.stdout.includes(path.join(projectRoot, 'mods')));
+});
+
+test('projekt lokalny ma pierwszeństwo przed projektem globalnie aktywnym', async () => {
+  const localRoot = path.join(temporaryDirectory, 'local');
+  const activeRoot = path.join(temporaryDirectory, 'active');
+  const localSubdirectory = path.join(localRoot, 'config', 'nested');
+  await fs.mkdir(localSubdirectory, { recursive: true });
+
+  await writeConfig({
+    minecraftVersion: '1.20.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, localRoot);
+  await writeConfig({
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, activeRoot);
+  await registerProject(localRoot, { name: 'local' });
+  await registerProject(activeRoot, { name: 'active' });
+  process.chdir(localSubdirectory);
+
+  const config = await readConfig();
+  assert.equal(config.minecraftVersion, '1.20.1');
+  assert.equal(getProjectRootForConfig(config), localRoot);
+});
+
+test('MCPM_PROJECT jednorazowo zastępuje projekt lokalny i globalnie aktywny', async () => {
+  const localRoot = path.join(temporaryDirectory, 'local');
+  const overrideRoot = path.join(temporaryDirectory, 'override');
+  await writeConfig({
+    minecraftVersion: '1.20.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, localRoot);
+  await writeConfig({
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, overrideRoot);
+  await registerProject(localRoot, { name: 'local' });
+  process.chdir(localRoot);
+  process.env.MCPM_PROJECT = overrideRoot;
+
+  const config = await readConfig();
+  assert.equal(config.minecraftVersion, '1.21.1');
+  assert.equal(getProjectRootForConfig(config), overrideRoot);
+});
+
+test('projekt można usunąć z rejestru bez usuwania jego plików', async () => {
+  const projectRoot = path.join(temporaryDirectory, 'registered');
+  await writeConfig({
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, projectRoot);
+  await registerProject(projectRoot, { name: 'registered' });
+
+  await forgetProject('registered');
+
+  assert.deepEqual(await listProjects(), []);
+  assert.equal((await readConfig(projectRoot)).minecraftVersion, '1.21.1');
 });
 
 test('resolver respektuje dokładne version_id wymaganej zależności', async () => {

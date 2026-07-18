@@ -3,7 +3,15 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { getProject, getProjectVersions, getVersion } from './api.js';
 import { downloadFile } from './downloader.js';
-import { readConfig, readLock, writeConfig, writeLock } from './config.js';
+import {
+  getProjectRootForConfig,
+  readConfig,
+  readLock,
+  resolveModsDir,
+  writeConfig,
+  writeLock
+} from './config.js';
+import { resolveProjectRoot } from './projects.js';
 import { assertVersionCompatible, selectCompatibleVersion } from './versioning.js';
 
 function clone(value) {
@@ -161,6 +169,10 @@ function collectRequiredDependencies(installed) {
 }
 
 export async function applyInstallPlan(plan, config, lock, options = {}) {
+  const projectRoot = options.projectRoot ||
+    getProjectRootForConfig(config) ||
+    await resolveProjectRoot();
+  const modsDir = resolveModsDir(config, projectRoot);
   const previousLock = options.previousLock || lock;
   const persistedConfig = options.persistedConfig || config;
   const persistedLock = options.persistedLock || previousLock;
@@ -216,7 +228,7 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
       nextConfig.mods[item.project.slug] = 'latest';
     }
 
-    const targetPath = path.join(config.modsDir, file.filename);
+    const targetPath = path.join(modsDir, file.filename);
     const sameVersion = old?.versionId
       ? old.versionId === entry.versionId
       : old?.version === entry.version;
@@ -247,8 +259,8 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
     }
   }
 
-  await fs.mkdir(config.modsDir, { recursive: true });
-  const stagingDir = path.join(config.modsDir, `.mcpm-staging-${randomUUID()}`);
+  await fs.mkdir(modsDir, { recursive: true });
+  const stagingDir = path.join(modsDir, `.mcpm-staging-${randomUUID()}`);
   const backupDir = path.join(stagingDir, 'backup');
   const stagedFiles = [];
   const backups = [];
@@ -274,7 +286,7 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
     }
 
     await fs.mkdir(backupDir, { recursive: true });
-    const pathsToBackup = new Set([...filesToRemove].map(filename => path.join(config.modsDir, filename)));
+    const pathsToBackup = new Set([...filesToRemove].map(filename => path.join(modsDir, filename)));
     for (const staged of stagedFiles) pathsToBackup.add(staged.targetPath);
 
     for (const originalPath of pathsToBackup) {
@@ -290,8 +302,8 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
     }
 
     stateWriteStarted = true;
-    await writeConfig(nextConfig);
-    await writeLock(nextLock);
+    await writeConfig(nextConfig, projectRoot);
+    await writeLock(nextLock, projectRoot);
 
     let cleanupWarning = null;
     try {
@@ -326,8 +338,8 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
 
     if (stateWriteStarted) {
       try {
-        await writeConfig(persistedConfig);
-        await writeLock(persistedLock);
+        await writeConfig(persistedConfig, projectRoot);
+        await writeLock(persistedLock, projectRoot);
       } catch (cleanupError) {
         error.cleanupError ||= cleanupError;
       }
@@ -345,13 +357,17 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
 
 export async function installProjects(rootSlugs, options = {}, overrides = {}) {
   const config = overrides.config || await readConfig();
-  const lock = overrides.lock || await readLock();
+  const projectRoot = overrides.projectRoot ||
+    getProjectRootForConfig(config) ||
+    await resolveProjectRoot();
+  const lock = overrides.lock || await readLock(projectRoot);
   const plan = await resolveInstallPlan(rootSlugs, config, options, overrides.services);
 
   return applyInstallPlan(plan, config, lock, {
     previousLock: overrides.previousLock,
     persistedConfig: overrides.persistedConfig,
     persistedLock: overrides.persistedLock,
-    removeAllPrevious: overrides.removeAllPrevious
+    removeAllPrevious: overrides.removeAllPrevious,
+    projectRoot
   });
 }

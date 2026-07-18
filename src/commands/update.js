@@ -8,7 +8,7 @@ import { installProjects } from '../installer.js';
  */
 export async function updateCommand(options = {}) {
   if (!(await isInitialized())) {
-    throw new Error('Projekt nie jest zainicjalizowany. Uruchom najpierw "mcpm init"');
+    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
   }
 
   const config = await readConfig();

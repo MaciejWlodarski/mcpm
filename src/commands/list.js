@@ -1,24 +1,31 @@
 import pc from 'picocolors';
-import { isInitialized, readConfig, readLock } from '../config.js';
+import {
+  getProjectRootForConfig,
+  isInitialized,
+  readConfig,
+  readLock,
+  resolveModsDir
+} from '../config.js';
 
 /**
  * Lists all installed mods with their versions, installation type, and dependency mappings.
  */
 export async function listCommand() {
   if (!(await isInitialized())) {
-    console.error(pc.red('Błąd: Projekt nie jest zainicjalizowany. Uruchom najpierw "mcpm init"'));
-    process.exit(1);
+    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
   }
 
   const config = await readConfig();
-  const lock = await readLock();
+  const projectRoot = getProjectRootForConfig(config);
+  const lock = await readLock(projectRoot);
 
   const installedCount = Object.keys(lock.installed).length;
   
   console.log(pc.bold('MCPM - Konfiguracja projektu:'));
+  console.log(`  Projekt:   ${pc.cyan(projectRoot)}`);
   console.log(`  Minecraft: ${pc.cyan(config.minecraftVersion)}`);
   console.log(`  Loader:    ${pc.cyan(config.loader)}`);
-  console.log(`  Katalog:   ${pc.cyan(config.modsDir)}`);
+  console.log(`  Katalog:   ${pc.cyan(resolveModsDir(config, projectRoot))}`);
   console.log(`  Zainstalowane modyfikacje: ${pc.cyan(installedCount)}\n`);
 
   if (installedCount === 0) {

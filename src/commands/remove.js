@@ -2,7 +2,15 @@ import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import pc from 'picocolors';
-import { isInitialized, readConfig, writeConfig, readLock, writeLock } from '../config.js';
+import {
+  getProjectRootForConfig,
+  isInitialized,
+  readConfig,
+  writeConfig,
+  readLock,
+  resolveModsDir,
+  writeLock
+} from '../config.js';
 
 function collectRequiredDependencies(installed) {
   const required = new Set();
@@ -42,14 +50,14 @@ async function pathExists(filePath) {
   }
 }
 
-async function persistState(nextConfig, nextLock, previousConfig, previousLock) {
+async function persistState(nextConfig, nextLock, previousConfig, previousLock, projectRoot) {
   try {
-    await writeConfig(nextConfig);
-    await writeLock(nextLock);
+    await writeConfig(nextConfig, projectRoot);
+    await writeLock(nextLock, projectRoot);
   } catch (error) {
     try {
-      await writeConfig(previousConfig);
-      await writeLock(previousLock);
+      await writeConfig(previousConfig, projectRoot);
+      await writeLock(previousLock, projectRoot);
     } catch (rollbackError) {
       error.rollbackError = rollbackError;
     }
@@ -67,11 +75,13 @@ export async function removeCommand(slugOrId) {
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Projekt nie jest zainicjalizowany. Uruchom najpierw "mcpm init"');
+    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
   }
 
   const config = await readConfig();
-  const lock = await readLock();
+  const projectRoot = getProjectRootForConfig(config);
+  const modsDir = resolveModsDir(config, projectRoot);
+  const lock = await readLock(projectRoot);
   const nextConfig = structuredClone(config);
   const nextLock = structuredClone(lock);
   const targetEntry = Object.entries(nextLock.installed || {})
@@ -101,7 +111,7 @@ export async function removeCommand(slugOrId) {
       );
     }
 
-    await persistState(nextConfig, nextLock, config, lock);
+    await persistState(nextConfig, nextLock, config, lock, projectRoot);
     console.log(pc.green(
       `${targetMod.title} nie jest już modem bezpośrednim, ale pozostaje zainstalowany jako wymagana zależność.`
     ));
@@ -119,7 +129,7 @@ export async function removeCommand(slugOrId) {
     }
   }
 
-  const stagingDir = path.join(config.modsDir, `.mcpm-staging-remove-${randomUUID()}`);
+  const stagingDir = path.join(modsDir, `.mcpm-staging-remove-${randomUUID()}`);
   const backups = [];
   let stateWriteStarted = false;
 
@@ -128,7 +138,7 @@ export async function removeCommand(slugOrId) {
 
     for (const mod of removedMods) {
       if (!mod.filename) continue;
-      const originalPath = getManagedFilePath(config.modsDir, mod.filename);
+      const originalPath = getManagedFilePath(modsDir, mod.filename);
       if (!(await pathExists(originalPath))) continue;
       const backupPath = path.join(stagingDir, `${randomUUID()}-${mod.filename}`);
       await fs.rename(originalPath, backupPath);
@@ -136,7 +146,7 @@ export async function removeCommand(slugOrId) {
     }
 
     stateWriteStarted = true;
-    await persistState(nextConfig, nextLock, config, lock);
+    await persistState(nextConfig, nextLock, config, lock, projectRoot);
 
     let cleanupWarning = null;
     try {
@@ -167,8 +177,8 @@ export async function removeCommand(slugOrId) {
 
     if (stateWriteStarted) {
       try {
-        await writeConfig(config);
-        await writeLock(lock);
+        await writeConfig(config, projectRoot);
+        await writeLock(lock, projectRoot);
       } catch (rollbackError) {
         error.rollbackError ||= rollbackError;
       }

@@ -13,7 +13,7 @@ export async function installCommand(slugOrId, options = {}) {
   }
 
   if (!(await isInitialized())) {
-    throw new Error('Projekt nie jest zainicjalizowany. Uruchom najpierw "mcpm init"');
+    throw new Error('Nie znaleziono projektu MCPM. Użyj "mcpm use <projekt>" albo "mcpm init"');
   }
 
   console.log(pc.cyan(`Rozwiązywanie zależności dla: ${pc.bold(slugOrId)}...`));
