@@ -4,7 +4,6 @@ import { installProjects } from '../installer.js';
 
 /**
  * Updates all directly installed mods in one transaction.
- * `upgrade` is a CLI alias for this same command.
  * @param {object} options Command line options.
  */
 export async function updateCommand(options = {}) {

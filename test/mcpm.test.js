@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { resolveInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
 import { readConfig, readLock, writeConfig, writeLock } from '../src/config.js';
 import { removeCommand } from '../src/commands/remove.js';
 
 const originalCwd = process.cwd();
+const cliPath = fileURLToPath(new URL('../bin/mcpm.js', import.meta.url));
 let temporaryDirectory;
 let originalFetch;
 
@@ -44,6 +47,15 @@ test('nie wybiera wersji beta, gdy beta jest wyłączona', () => {
     /Brak wersji typu release/
   );
   assert.equal(selectCompatibleVersion([beta], '1.21.1', 'fabric', true), beta);
+});
+
+test('CLI rozdziela update modów od upgrade wersji Minecraft', () => {
+  const result = spawnSync(process.execPath, [cliPath, '--help'], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /update \[options\]\s+Zaktualizuj wszystkie mody/);
+  assert.match(result.stdout, /upgrade \[options\] <version>/);
+  assert.doesNotMatch(result.stdout, /upgrade-mc|update\|upgrade/);
 });
 
 test('resolver respektuje dokładne version_id wymaganej zależności', async () => {

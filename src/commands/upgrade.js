@@ -7,9 +7,9 @@ import { installProjects } from '../installer.js';
  * @param {string} newVersion The new Minecraft version.
  * @param {object} options Command line options.
  */
-export async function upgradeMcCommand(newVersion, options = {}) {
+export async function upgradeCommand(newVersion, options = {}) {
   if (!newVersion || newVersion.trim() === '') {
-    throw new Error('Podaj nową wersję Minecraft. Przykład: mcpm upgrade-mc 1.21.1');
+    throw new Error('Podaj nową wersję Minecraft. Przykład: mcpm upgrade 1.21.1');
   }
 
   if (!(await isInitialized())) {
@@ -57,3 +57,4 @@ export async function upgradeMcCommand(newVersion, options = {}) {
   )));
   return result;
 }
+

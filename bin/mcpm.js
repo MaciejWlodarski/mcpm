@@ -7,7 +7,7 @@ import { installCommand } from '../src/commands/install.js';
 import { removeCommand } from '../src/commands/remove.js';
 import { updateCommand } from '../src/commands/update.js';
 import { listCommand } from '../src/commands/list.js';
-import { upgradeMcCommand } from '../src/commands/upgradeMc.js';
+import { upgradeCommand } from '../src/commands/upgrade.js';
 import pc from 'picocolors';
 
 const program = new Command();
@@ -42,9 +42,8 @@ program
 
 program
   .command('update')
-  .alias('upgrade')
   .option('-b, --beta', 'Dopuść wersje próbne (beta) podczas aktualizacji')
-  .description('Zaktualizuj wszystkie mody (upgrade jest aliasem tego polecenia)')
+  .description('Zaktualizuj wszystkie mody dla bieżącej wersji Minecraft')
   .action((options) => updateCommand(options));
 
 program
@@ -54,10 +53,10 @@ program
   .action(listCommand);
 
 program
-  .command('upgrade-mc <version>')
+  .command('upgrade <version>')
   .option('-b, --beta', 'Dopuść wersje próbne (beta) dla nowej wersji gry')
   .description('Zmień wersję Minecraft projektu i przeinstaluj modyfikacje')
-  .action((version, options) => upgradeMcCommand(version, options));
+  .action((version, options) => upgradeCommand(version, options));
 
 try {
   await program.parseAsync(process.argv);
