@@ -1,6 +1,6 @@
 {
   "name": "mcpm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Minecraft Package Manager - CLI mod manager powered by Modrinth API",
   "type": "module",
   "bin": {
@@ -13,7 +13,7 @@
   "scripts": {
     "start": "node ./bin/mcpm.js",
     "test": "node --test --test-concurrency=1",
-    "check": "node --check ./bin/mcpm.js && node --check ./src/api.js && node --check ./src/config.js && node --check ./src/downloader.js && node --check ./src/installer.js && node --check ./src/versioning.js && node --check ./features/launcher/src/auth.js && node --check ./features/launcher/src/secure-storage.js && node --check ./features/launcher/src/index.js && node ./bin/mcpm.js --help"
+    "check": "node --check ./bin/mcpm.js && node --check ./src/api.js && node --check ./src/config.js && node --check ./src/downloader.js && node --check ./src/installer.js && node --check ./src/versioning.js && node --check ./features/launcher/src/auth.js && node --check ./features/launcher/src/downloads.js && node --check ./features/launcher/src/metadata.js && node --check ./features/launcher/src/java-runtime.js && node --check ./features/launcher/src/minecraft-runtime.js && node --check ./features/launcher/src/launch.js && node --check ./features/launcher/src/secure-storage.js && node --check ./features/launcher/src/index.js && node ./bin/mcpm.js --help"
   },
   "engines": {
     "node": ">=18"
@@ -40,5 +40,8 @@
     "commander": "^13.1.0",
     "ora": "^8.2.0",
     "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.3"
   }
 }

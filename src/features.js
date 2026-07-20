@@ -9,9 +9,16 @@ import {
   readLock,
   resolveModsDir
 } from './config.js';
-import { getStateDirectory, resolveProjectRoot } from './projects.js';
+import {
+  getStateDirectory,
+  listProjects,
+  resolveProjectReference,
+  resolveProjectRoot,
+  setActiveProject
+} from './projects.js';
 
-const FEATURE_API_VERSION = 1;
+const FEATURE_API_VERSION = 2;
+const SUPPORTED_FEATURE_API_VERSIONS = new Set([1, FEATURE_API_VERSION]);
 const FEATURE_REGISTRY_FILENAME = 'features.json';
 const FEATURE_CATALOG = Object.freeze({
   launcher: {
@@ -130,8 +137,11 @@ async function readFeaturePackage(packageName) {
   if (manifest.name !== packageName) {
     throw new Error(`The installed package has an unexpected name: ${manifest.name}`);
   }
-  if (manifest.mcpmFeature?.apiVersion !== FEATURE_API_VERSION || !manifest.mcpmFeature?.entry) {
-    throw new Error(`Package ${packageName} does not support MCPM Feature API v${FEATURE_API_VERSION}`);
+  if (!SUPPORTED_FEATURE_API_VERSIONS.has(manifest.mcpmFeature?.apiVersion) ||
+      !manifest.mcpmFeature?.entry) {
+    throw new Error(
+      `Package ${packageName} requires an unsupported MCPM Feature API version`
+    );
   }
 
   const entryPath = path.resolve(packageDirectory, manifest.mcpmFeature.entry);
@@ -155,8 +165,9 @@ async function getInstallSpec(featureName, source) {
         `The source for feature ${featureName} must contain package ${catalogEntry.packageName}`
       );
     }
-    if (manifest.mcpmFeature?.apiVersion !== FEATURE_API_VERSION || !manifest.mcpmFeature?.entry) {
-      throw new Error(`The source for feature ${featureName} does not support MCPM Feature API v1`);
+    if (!SUPPORTED_FEATURE_API_VERSIONS.has(manifest.mcpmFeature?.apiVersion) ||
+        !manifest.mcpmFeature?.entry) {
+      throw new Error(`The source for feature ${featureName} uses an unsupported Feature API`);
     }
     return sourcePath;
   }
@@ -229,13 +240,18 @@ export async function listFeatures() {
   }));
 }
 
-function createFeatureApi() {
+function createFeatureApi(version = FEATURE_API_VERSION) {
   return Object.freeze({
-    version: FEATURE_API_VERSION,
+    version,
     getStateDirectory,
+    listProjects,
     resolveProjectRoot,
-    async getProjectContext() {
-      const config = await readConfig();
+    setActiveProject,
+    async getProjectContext(reference = null) {
+      const root = reference
+        ? await resolveProjectReference(reference)
+        : await resolveProjectRoot();
+      const config = await readConfig(root);
       const projectRoot = getProjectRootForConfig(config);
       const lock = await readLock(projectRoot);
       return {
@@ -264,7 +280,10 @@ export async function loadInstalledFeatures(program) {
       if (typeof module.registerFeature !== 'function') {
         throw new Error(`Package ${installed.packageName} does not export registerFeature`);
       }
-      await module.registerFeature({ program, api: createFeatureApi() });
+      await module.registerFeature({
+        program,
+        api: createFeatureApi(manifest.mcpmFeature.apiVersion)
+      });
       loaded.push({ name, version: manifest.version });
     } catch (error) {
       failures.push({ name, message: error.message });

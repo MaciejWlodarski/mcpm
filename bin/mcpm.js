@@ -23,11 +23,11 @@ const program = new Command();
 program
   .name('mcpm')
   .description('Minecraft Package Manager - CLI mod manager powered by Modrinth API')
-  .version('1.0.0');
+  .version('1.1.0');
 
 program
-  .command('init')
-  .description('Initialize an MCPM project in the current directory')
+  .command('init [path]')
+  .description('Initialize an MCPM profile in the selected or current directory')
   .action(initCommand);
 
 program
@@ -59,6 +59,10 @@ program
   .command('config')
   .description('Show or change the current project settings')
   .option('--beta <on|off>', 'Persistently enable or disable beta releases for the project')
+  .option('--java <path|auto>', 'Set a Java executable/home path, or use auto detection')
+  .option('--memory <size>', 'Set maximum game memory, for example 4G or 4096M')
+  .option('--resolution <widthxheight>', 'Set the default game window resolution')
+  .option('--game-dir <path>', 'Set the profile game directory relative to the project')
   .action(configCommand);
 
 const featureCommand = program
@@ -109,7 +113,8 @@ program
 program
   .command('upgrade <version>')
   .option('-b, --beta', 'Allow beta releases for the new game version')
-  .description('Change the project Minecraft version and reinstall its mods')
+  .option('--loader <loader>', 'Change the mod loader while upgrading')
+  .description('Upgrade the Minecraft version, loader, and complete mod set')
   .action((version, options) => upgradeCommand(version, options));
 
 const featureLoadResult = await loadInstalledFeatures(program);

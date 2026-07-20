@@ -46,7 +46,10 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
   const versionToProject = new Map();
   const rootProjectIds = new Set();
 
-  async function resolveProject(idOrSlug, { direct = false, exactVersion = null } = {}) {
+  async function resolveProject(
+    idOrSlug,
+    { direct = false, exactVersion = null, retained = false } = {}
+  ) {
     const project = await api.getProject(exactVersion?.project_id || idOrSlug);
     const projectId = project.id;
 
@@ -74,7 +77,7 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
         exactVersion,
         config.minecraftVersion,
         config.loader,
-        allowBeta
+        allowBeta || retained
       );
     } else {
       const versions = await api.getProjectVersions(
@@ -141,7 +144,9 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
   }
 
   for (const slug of [...new Set(rootSlugs)]) {
-    await resolveProject(slug, { direct: true });
+    const pinnedVersionId = options.pinnedVersions?.[slug];
+    const exactVersion = pinnedVersionId ? await api.getVersion(pinnedVersionId) : null;
+    await resolveProject(slug, { direct: true, exactVersion, retained: Boolean(pinnedVersionId) });
   }
 
   return { items, rootProjectIds, versionToProject, allowBeta };

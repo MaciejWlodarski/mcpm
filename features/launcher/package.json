@@ -1,6 +1,6 @@
 {
   "name": "@mcpm/feature-launcher",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Optional direct Minecraft launcher feature for MCPM",
   "type": "module",
   "files": [
@@ -10,8 +10,20 @@
     "node": ">=18"
   },
   "mcpmFeature": {
-    "apiVersion": 1,
+    "apiVersion": 2,
     "entry": "./src/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MaciejWlodarski/mcpm.git",
+    "directory": "features/launcher"
+  },
+  "homepage": "https://github.com/MaciejWlodarski/mcpm#readme",
+  "dependencies": {
+    "fflate": "^0.8.3"
   },
   "license": "MIT"
 }

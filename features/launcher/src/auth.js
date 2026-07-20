@@ -181,6 +181,7 @@ export async function exchangeMicrosoftTokenForMinecraft(microsoftToken, options
     },
     minecraft: {
       accessToken: minecraft.access_token,
+      xuid: minecraft.username || '',
       expiresAt: new Date(savedAt + (Number(minecraft.expires_in) || 86400) * 1000).toISOString()
     },
     profile: {

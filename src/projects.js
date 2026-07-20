@@ -154,6 +154,24 @@ export async function listProjects() {
   })));
 }
 
+export async function resolveProjectReference(reference) {
+  if (!reference) return resolveProjectRoot();
+
+  const registry = await readProjectRegistry();
+  const registered = registry.projects[reference];
+  if (registered) {
+    const root = path.resolve(registered.path);
+    if (!(await isProjectRoot(root))) {
+      throw new Error(`Registered project "${reference}" no longer exists at ${root}`);
+    }
+    return root;
+  }
+
+  const directRoot = await findProjectRoot(path.resolve(reference));
+  if (directRoot) return directRoot;
+  throw new Error(`MCPM profile "${reference}" was not found.`);
+}
+
 export async function resolveProjectRoot() {
   if (process.env.MCPM_PROJECT) {
     const environmentRoot = await findProjectRoot(process.env.MCPM_PROJECT);

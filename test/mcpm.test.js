@@ -10,6 +10,8 @@ import { resolveInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
 import {
   getProjectRootForConfig,
+  getConfigPath,
+  getLockPath,
   readConfig,
   readLock,
   resolveModsDir,
@@ -18,7 +20,9 @@ import {
 } from '../src/config.js';
 import { removeCommand } from '../src/commands/remove.js';
 import { configCommand } from '../src/commands/configure.js';
+import { persistInitializedProject } from '../src/commands/init.js';
 import { updateProjects } from '../src/commands/update.js';
+import { upgradeCommand } from '../src/commands/upgrade.js';
 import {
   installFeature,
   listFeatures,
@@ -40,6 +44,10 @@ let originalFetch;
 let originalStateDirectory;
 let originalProjectOverride;
 let originalNpmCache;
+
+function stripAnsi(value) {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
 
 async function createProjectState(config, lock) {
   await writeConfig(config, process.cwd());
@@ -91,6 +99,7 @@ test('CLI separates mod updates from Minecraft version upgrades', () => {
   const result = spawnSync(process.execPath, [cliPath, '--help'], { encoding: 'utf8' });
 
   assert.equal(result.status, 0);
+  assert.match(result.stdout, /init \[path\]/);
   assert.match(result.stdout, /update \[options\]\s+Update all mods/);
   assert.match(result.stdout, /upgrade \[options\] <version>/);
   assert.doesNotMatch(result.stdout, /upgrade-mc|update\|upgrade/);
@@ -124,6 +133,69 @@ test('beta setting is persisted in the project configuration and lock file', asy
   assert.equal((await readConfig()).allowBeta, false);
   assert.equal((await readLock()).allowBeta, false);
   await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
+
+  await configCommand({
+    java: 'C:\\Java\\jdk-25',
+    memory: '6g',
+    resolution: '1600x900',
+    gameDir: './game'
+  });
+  const launchConfig = await readConfig();
+  assert.equal(launchConfig.launcher.javaPath, 'C:\\Java\\jdk-25');
+  assert.equal(launchConfig.launcher.memory.max, '6G');
+  assert.deepEqual(launchConfig.launcher.resolution, { width: 1600, height: 900 });
+  assert.equal(launchConfig.gameDir, './game');
+  await assert.rejects(configCommand({ memory: '256M' }), /cannot be lower/);
+  await assert.rejects(configCommand({ gameDir: modsDir }), /cannot overlap recursively/);
+});
+
+test('relative Java configuration is stored relative to the profile, not a later cwd', async () => {
+  await createProjectState({
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
+  }, { minecraftVersion: '1.21.1', loader: 'fabric', installed: {} });
+  await configCommand({ java: './jdk' });
+  assert.equal((await readConfig()).launcher.javaPath, path.join(temporaryDirectory, 'jdk'));
+});
+
+test('failed project initialization rolls back newly created profile files', async () => {
+  const projectRoot = path.join(temporaryDirectory, 'new-profile');
+  await assert.rejects(persistInitializedProject(
+    projectRoot,
+    { minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {} },
+    { minecraftVersion: '1.21.1', loader: 'fabric', installed: {} },
+    'new-profile',
+    { writeLock: async () => { throw new Error('lock failed'); } }
+  ), /lock failed/);
+  await assert.rejects(fs.access(getConfigPath(projectRoot)), { code: 'ENOENT' });
+  await assert.rejects(fs.access(getLockPath(projectRoot)), { code: 'ENOENT' });
+});
+
+test('upgrade changes the Minecraft version, loader, and complete mod plan together', async () => {
+  await createProjectState({
+    minecraftVersion: '1.20.1',
+    loader: 'fabric',
+    modsDir: './mods',
+    allowBeta: false,
+    mods: { sodium: 'latest' }
+  }, {
+    minecraftVersion: '1.20.1',
+    loader: 'fabric',
+    allowBeta: false,
+    installed: { sodium: { slug: 'sodium', filename: 'sodium.jar', isDependency: false } }
+  });
+  let request;
+  const result = await upgradeCommand('1.21.1', { loader: 'neoforge' }, async (...args) => {
+    request = args;
+    return { downloaded: 1, removed: 1, cleanupWarning: null };
+  });
+
+  assert.equal(result.downloaded, 1);
+  assert.deepEqual(request[0], ['sodium']);
+  assert.equal(request[2].config.minecraftVersion, '1.21.1');
+  assert.equal(request[2].config.loader, 'neoforge');
+  assert.equal(request[2].lock.minecraftVersion, '1.21.1');
+  assert.equal(request[2].lock.loader, 'neoforge');
+  assert.equal(request[2].removeAllPrevious, true);
 });
 
 test('update skips an incompatible mod and updates the remaining mods', async () => {
@@ -148,22 +220,64 @@ test('update skips an incompatible mod and updates the remaining mods', async ()
   }]);
 });
 
+test('batch update pins skipped mods while resolving one dependency graph', async () => {
+  const config = {
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
+    mods: { firmament: 'latest', sodium: 'latest' }
+  };
+  const lock = { installed: {
+    firmament: {
+      slug: 'firmament', versionId: 'firmament-old', filename: 'firmament.jar', isDependency: false
+    },
+    sodium: {
+      slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
+    }
+  } };
+  const combinedOptions = [];
+  const resolvePlan = async (roots, _config, options) => {
+    if (roots.length === 1 && roots[0] === 'firmament') throw new Error('No compatible version');
+    if (roots.length > 1) combinedOptions.push(options.pinnedVersions);
+    return { roots, allowBeta: false, items: new Map() };
+  };
+  const applyPlan = async () => ({
+    downloaded: 1,
+    removed: 1,
+    cleanupWarning: null,
+    lock: { installed: {
+      ...lock.installed,
+      sodium: {
+        slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
+      }
+    } }
+  });
+
+  const summary = await updateProjects(['firmament', 'sodium'], {}, {
+    config, lock, projectRoot: temporaryDirectory, resolvePlan, applyPlan
+  });
+  assert.equal(summary.updated, 1);
+  assert.deepEqual(summary.failures, [{ slug: 'firmament', message: 'No compatible version' }]);
+  assert.ok(combinedOptions.every(pins => pins.firmament === 'firmament-old'));
+});
+
 test('the optional launcher can be installed, loaded, and uninstalled', async () => {
   assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
 
   const installed = await installFeature('launcher', { source: launcherFeaturePath });
   assert.equal(installed.name, 'launcher');
-  assert.equal(installed.version, '0.2.1');
+  assert.equal(installed.version, '0.3.0');
 
   const program = new Command();
   const loaded = await loadInstalledFeatures(program);
   assert.deepEqual(loaded.failures, []);
-  assert.deepEqual(loaded.loaded, [{ name: 'launcher', version: '0.2.1' }]);
+  assert.deepEqual(loaded.loaded, [{ name: 'launcher', version: '0.3.0' }]);
   assert.ok(program.commands.some(command => command.name() === 'launcher'));
+  assert.ok(program.commands.some(command => command.name() === 'profiles'));
+  assert.ok(program.commands.some(command => command.name() === 'profile'));
+  assert.ok(program.commands.some(command => command.name() === 'launch'));
   const launcher = program.commands.find(command => command.name() === 'launcher');
   assert.deepEqual(
     launcher.commands.map(command => command.name()),
-    ['status', 'login', 'account', 'logout']
+    ['status', 'profiles', 'prepare', 'login', 'account', 'logout']
   );
 
   await uninstallFeature('launcher');
@@ -219,8 +333,9 @@ test('CLI lists the active project from outside its directory', async () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Minecraft: 1\.21\.1/);
-  assert.ok(result.stdout.includes(path.join(projectRoot, 'mods')));
+  const output = stripAnsi(result.stdout);
+  assert.match(output, /Minecraft: 1\.21\.1/);
+  assert.ok(output.includes(path.join(projectRoot, 'mods')));
 });
 
 test('a local project takes precedence over the globally active project', async () => {
