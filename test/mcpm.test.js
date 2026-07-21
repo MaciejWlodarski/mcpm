@@ -235,7 +235,9 @@ test('batch update pins skipped mods while resolving one dependency graph', asyn
   } };
   const combinedOptions = [];
   const resolvePlan = async (roots, _config, options) => {
-    if (roots.length === 1 && roots[0] === 'firmament') throw new Error('No compatible version');
+    if (roots.length === 1 && roots[0] === 'firmament' && !options.pinnedVersions?.firmament) {
+      throw new Error('No compatible version');
+    }
     if (roots.length > 1) combinedOptions.push(options.pinnedVersions);
     return { roots, allowBeta: false, items: new Map() };
   };
@@ -257,6 +259,119 @@ test('batch update pins skipped mods while resolving one dependency graph', asyn
   assert.equal(summary.updated, 1);
   assert.deepEqual(summary.failures, [{ slug: 'firmament', message: 'No compatible version' }]);
   assert.ok(combinedOptions.every(pins => pins.firmament === 'firmament-old'));
+});
+
+test('batch update excludes a skipped mod whose installed version is incompatible', async () => {
+  const config = {
+    minecraftVersion: '26.1.2', loader: 'fabric', modsDir: './mods',
+    mods: { firmament: 'latest', sodium: 'latest' }
+  };
+  const lock = { installed: {
+    firmament: {
+      slug: 'firmament', versionId: 'firmament-old', filename: 'firmament.jar', isDependency: false
+    },
+    sodium: {
+      slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
+    }
+  } };
+  const combinedRoots = [];
+  const resolvePlan = async (roots, _config, options) => {
+    if (roots.includes('firmament')) {
+      if (options.pinnedVersions?.firmament) {
+        throw new Error('Version firmament-old does not support Minecraft 26.1.2');
+      }
+      throw new Error('No compatible version');
+    }
+    combinedRoots.push(roots);
+    return { roots, allowBeta: false, items: new Map() };
+  };
+  const applyPlan = async () => ({
+    downloaded: 1,
+    removed: 1,
+    cleanupWarning: null,
+    lock: { installed: {
+      ...lock.installed,
+      sodium: {
+        slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
+      }
+    } }
+  });
+
+  const summary = await updateProjects(['firmament', 'sodium'], {}, {
+    config, lock, projectRoot: temporaryDirectory, resolvePlan, applyPlan
+  });
+  assert.equal(summary.updated, 1);
+  assert.deepEqual(summary.failures, [{ slug: 'firmament', message: 'No compatible version' }]);
+  assert.ok(combinedRoots.some(roots => roots.includes('sodium')));
+  assert.ok(combinedRoots.every(roots => !roots.includes('firmament')));
+});
+
+test('a mocked update resolver does not trigger real API prefetch requests', async () => {
+  const config = {
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
+    mods: { sodium: 'latest' }
+  };
+  const lock = { installed: {} };
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('Unexpected network request');
+  };
+
+  try {
+    await updateProjects(['sodium'], {}, {
+      config,
+      lock,
+      projectRoot: temporaryDirectory,
+      resolvePlan: async roots => ({ roots, allowBeta: false, items: new Map() }),
+      applyPlan: async () => ({
+        downloaded: 0,
+        removed: 0,
+        cleanupWarning: null,
+        lock: { installed: {} }
+      })
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalls, 0);
+});
+
+test('batch update excludes skipped mods that cannot be pinned', async () => {
+  const config = {
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
+    mods: { firmament: 'latest', sodium: 'latest' }
+  };
+  const lock = { installed: {
+    sodium: {
+      slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
+    }
+  } };
+  const combinedRoots = [];
+  const resolvePlan = async (roots) => {
+    if (roots.includes('firmament')) throw new Error('No compatible version');
+    if (roots.length > 1 || roots[0] === 'sodium') combinedRoots.push(roots);
+    return { roots, allowBeta: false, items: new Map() };
+  };
+  const applyPlan = async () => ({
+    downloaded: 1,
+    removed: 1,
+    cleanupWarning: null,
+    lock: { installed: {
+      sodium: {
+        slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
+      }
+    } }
+  });
+
+  const summary = await updateProjects(['firmament', 'sodium'], {}, {
+    config, lock, projectRoot: temporaryDirectory, resolvePlan, applyPlan
+  });
+  assert.equal(summary.updated, 1);
+  assert.deepEqual(summary.failures, [{ slug: 'firmament', message: 'No compatible version' }]);
+  assert.ok(combinedRoots.every(roots => !roots.includes('firmament')));
 });
 
 test('the optional launcher can be installed, loaded, and uninstalled', async () => {

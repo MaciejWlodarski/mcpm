@@ -1,5 +1,12 @@
 import pc from 'picocolors';
 import {
+  getProject,
+  getProjects,
+  getProjectVersions,
+  getVersion,
+  getVersions
+} from '../api.js';
+import {
   getProjectRootForConfig,
   isInitialized,
   readConfig,
@@ -17,6 +24,80 @@ function pinnedVersions(directMods, updating, lock) {
     const installed = installedBySlug(lock, slug);
     return installed?.versionId ? [[slug, installed.versionId]] : [];
   }));
+}
+
+function planRoots(directMods, updating, retained) {
+  return directMods.filter(slug => updating.has(slug) || retained.has(slug));
+}
+
+function cacheAsync(cache, key, loader) {
+  if (!cache.has(key)) cache.set(key, loader());
+  return cache.get(key);
+}
+
+function cacheProject(projectCache, project) {
+  const cached = Promise.resolve(project);
+  projectCache.set(project.id, cached);
+  projectCache.set(project.slug, cached);
+}
+
+function createCachedApiServices(apiServices = null, enablePrefetch = true) {
+  const overrides = apiServices || {};
+  const useDefaultBatchApi = apiServices === null;
+  const projectCache = new Map();
+  const versionsCache = new Map();
+  const versionCache = new Map();
+  const api = {
+    getProject: overrides.getProject || getProject,
+    getProjects: overrides.getProjects || (useDefaultBatchApi ? getProjects : null),
+    getProjectVersions: overrides.getProjectVersions || getProjectVersions,
+    getVersion: overrides.getVersion || getVersion,
+    getVersions: overrides.getVersions || (useDefaultBatchApi ? getVersions : null)
+  };
+
+  return {
+    getProject: idOrSlug => cacheAsync(
+      projectCache,
+      idOrSlug,
+      () => api.getProject(idOrSlug)
+    ),
+    prefetchProjects: async idsOrSlugs => {
+      if (!enablePrefetch || !api.getProjects) return;
+      const missing = [...new Set(idsOrSlugs)]
+        .filter(idOrSlug => idOrSlug && !projectCache.has(idOrSlug));
+      if (missing.length === 0) return;
+      try {
+        const projects = await api.getProjects(missing);
+        for (const project of projects) cacheProject(projectCache, project);
+      } catch {
+        // Batch prefetch is an optimization; per-project resolution reports real errors later.
+      }
+    },
+    getProjectVersions: (projectId, minecraftVersion, loader) => cacheAsync(
+      versionsCache,
+      JSON.stringify([projectId, minecraftVersion, loader]),
+      () => api.getProjectVersions(projectId, minecraftVersion, loader)
+    ),
+    getVersion: versionId => cacheAsync(
+      versionCache,
+      versionId,
+      () => api.getVersion(versionId)
+    ),
+    prefetchVersions: async versionIds => {
+      if (!enablePrefetch || !api.getVersions) return;
+      const missing = [...new Set(versionIds)]
+        .filter(versionId => versionId && !versionCache.has(versionId));
+      if (missing.length === 0) return;
+      try {
+        const versions = await api.getVersions(missing);
+        for (const version of versions) {
+          versionCache.set(version.id, Promise.resolve(version));
+        }
+      } catch {
+        // Batch prefetch is an optimization; per-version resolution reports real errors later.
+      }
+    }
+  };
 }
 
 async function updateIndependently(directMods, options, installer) {
@@ -66,15 +147,36 @@ export async function updateProjects(directMods, options = {}, services = {}) {
   const lock = services.lock || await readLock(projectRoot);
   const resolvePlan = services.resolvePlan || resolveInstallPlan;
   const applyPlan = services.applyPlan || applyInstallPlan;
+  const apiServices = createCachedApiServices(
+    services.apiServices ?? null,
+    !services.resolvePlan || Boolean(services.apiServices?.getProjects || services.apiServices?.getVersions)
+  );
+  await apiServices.prefetchProjects(directMods);
+  await apiServices.prefetchVersions(
+    Object.values(lock.installed || {}).map(mod => mod.versionId)
+  );
   const individuallyCompatible = [];
+  const retained = new Set();
   for (const [index, slug] of directMods.entries()) {
     console.log(pc.cyan(`\n[${index + 1}/${directMods.length}] Checking ${pc.bold(slug)}...`));
     try {
-      await resolvePlan([slug], config, options, services.apiServices);
+      await resolvePlan([slug], config, options, apiServices);
       individuallyCompatible.push(slug);
     } catch (error) {
       summary.failures.push({ slug, message: error.message });
       console.error(pc.yellow(`Skipped ${slug}: ${error.message}`));
+      const installed = installedBySlug(lock, slug);
+      if (installed?.versionId) {
+        try {
+          await resolvePlan([slug], config, {
+            ...options,
+            pinnedVersions: { [slug]: installed.versionId }
+          }, apiServices);
+          retained.add(slug);
+        } catch {
+          // An incompatible installed version must not block updates of other mods.
+        }
+      }
     }
   }
 
@@ -83,10 +185,10 @@ export async function updateProjects(directMods, options = {}, services = {}) {
   for (const slug of individuallyCompatible) {
     const tentative = new Set([...updating, slug]);
     try {
-      finalPlan = await resolvePlan(directMods, config, {
+      finalPlan = await resolvePlan(planRoots(directMods, tentative, retained), config, {
         ...options,
         pinnedVersions: pinnedVersions(directMods, tentative, lock)
-      }, services.apiServices);
+      }, apiServices);
       updating.add(slug);
     } catch (error) {
       summary.failures.push({ slug, message: error.message });
@@ -95,10 +197,6 @@ export async function updateProjects(directMods, options = {}, services = {}) {
   }
 
   if (updating.size === 0) return summary;
-  finalPlan = await resolvePlan(directMods, config, {
-    ...options,
-    pinnedVersions: pinnedVersions(directMods, updating, lock)
-  }, services.apiServices);
   const result = await applyPlan(finalPlan, config, lock, { projectRoot });
   summary.downloaded = result.downloaded;
   summary.removed = result.removed;
