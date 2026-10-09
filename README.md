@@ -24,14 +24,15 @@ Run these commands in the repository directory:
 
 ```text
 npm install
+npm run build
 npm link
 mcpm feature install launcher
 ```
 
 After `npm link`, `mcpm` is available from any directory. The global link points
-to this working copy, so later local code changes do not require another core
-installation. Reinstall the optional launcher feature after changing its package
-source.
+to this working copy. Run `npm run build` after local TypeScript changes; another
+core installation is not needed. Reinstall the optional launcher feature after
+changing its package source.
 
 ## Quick start
 
@@ -270,6 +271,20 @@ analytics, passwords, email addresses, or tokens.
 ## Development
 
 ```text
+npm ci
+npm run build
 npm test
 npm run check
 ```
+
+The CLI and optional launcher are written in TypeScript with strict type
+checking. `npm run build` compiles the CLI into `dist/bin` and `dist/src`, and
+the separate launcher package into `features/launcher/dist`. Both published npm
+packages contain JavaScript and type declarations, so users only need Node.js
+18 or newer. TypeScript is a development dependency.
+
+`npm test` builds both packages before running the regression tests against
+their compiled JavaScript. `npm run check` checks both packages and the
+compile-time contracts in `type-tests`. `npm pack` builds automatically before
+creating a package. To build the launcher independently, run `npm ci` and
+`npm run build` inside `features/launcher`.

@@ -9,13 +9,13 @@ import {
   MICROSOFT_SCOPES,
   pollForMicrosoftToken,
   requestDeviceCode
-} from '../features/launcher/src/auth.js';
+} from '../features/launcher/dist/auth.js';
 import {
   clearSession,
   getCredentialPath,
   readSession,
   saveSession
-} from '../features/launcher/src/secure-storage.js';
+} from '../features/launcher/dist/secure-storage.js';
 
 function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -270,7 +270,12 @@ test('macOS file storage remains usable without the native Keychain dependency',
   const modulePath = path.join(stateDirectory, 'secure-storage.mjs');
   const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
   try {
-    await fs.copyFile(new URL('../features/launcher/src/secure-storage.js', import.meta.url), modulePath);
+    await fs.copyFile(new URL('../features/launcher/dist/secure-storage.js', import.meta.url), modulePath);
+    await fs.copyFile(
+      new URL('../features/launcher/dist/errors.js', import.meta.url),
+      path.join(stateDirectory, 'errors.js')
+    );
+    await fs.writeFile(path.join(stateDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
     const isolatedStorage = await import(pathToFileURL(modulePath).href);
     await assert.rejects(
       isolatedStorage.readSession(stateDirectory),

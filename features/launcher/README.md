@@ -2,6 +2,14 @@
 
 Optional direct Minecraft launching for MCPM profiles.
 
+## Development
+
+Run `npm ci`, `npm run check`, and `npm run build` in this directory to work on
+the launcher independently. The TypeScript source is compiled into `dist`,
+which is the Feature API entry point included in the published npm package.
+`npm pack` builds the package automatically. When developing from the MCPM
+repository, the root `npm run build` builds both the CLI and launcher.
+
 ## Commands
 
 ```text

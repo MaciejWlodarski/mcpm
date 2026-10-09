@@ -1,0 +1,44 @@
+import { toError } from './errors.js';
+import fs from 'fs/promises';
+import path from 'path';
+import ora from 'ora';
+import pc from 'picocolors';
+
+/**
+ * Downloads a file from the given URL and saves it to target folder.
+ * Shows a loading spinner in the terminal.
+ * @param {string} url The download URL.
+ * @param {string} destDir Destination folder.
+ * @param {string} filename Output filename.
+ */
+export async function downloadFile(url: string, destDir: string, filename: string) {
+  const destPath = path.join(destDir, filename);
+  
+  // Ensure the destination folder exists
+  await fs.mkdir(destDir, { recursive: true });
+  
+  const spinner = ora(`Downloading ${pc.cyan(filename)}...`).start();
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'zireael/mcpm/1.0.0 (contact@zirea.el)'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Status HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    await fs.writeFile(destPath, buffer);
+    
+    spinner.succeed(`Downloaded ${pc.green(filename)}`);
+    return destPath;
+  } catch (errCause) {
+    const err = toError(errCause);
+    spinner.fail(`Failed to download ${pc.red(filename)}: ${err.message}`);
+    throw err;
+  }
+}

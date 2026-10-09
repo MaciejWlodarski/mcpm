@@ -10,22 +10,22 @@ import {
   mavenArtifactPath,
   resolveLaunchMetadata,
   rulesAllow
-} from '../features/launcher/src/metadata.js';
-import { downloadFile, resolveWithinDirectory } from '../features/launcher/src/downloads.js';
-import { installJavaRuntime, resolveJava } from '../features/launcher/src/java-runtime.js';
+} from '../features/launcher/dist/metadata.js';
+import { downloadFile, resolveWithinDirectory } from '../features/launcher/dist/downloads.js';
+import { installJavaRuntime, resolveJava } from '../features/launcher/dist/java-runtime.js';
 import {
   prepareMinecraftRuntime,
   writePreparedRuntimeMarker
-} from '../features/launcher/src/minecraft-runtime.js';
+} from '../features/launcher/dist/minecraft-runtime.js';
 import {
   buildLaunchCommand,
   ensureProfileDirectories
-} from '../features/launcher/src/launch.js';
+} from '../features/launcher/dist/launch.js';
 import {
   findPreparedRuntime,
   launcherLoginCommand,
   profilesCommand
-} from '../features/launcher/src/index.js';
+} from '../features/launcher/dist/index.js';
 
 function sha1(value) {
   return createHash('sha1').update(value).digest('hex');

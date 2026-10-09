@@ -4,16 +4,19 @@
   "description": "Minecraft Package Manager - CLI mod manager powered by Modrinth API",
   "type": "module",
   "bin": {
-    "mcpm": "./bin/mcpm.js"
+    "mcpm": "./dist/bin/mcpm.js"
   },
   "files": [
-    "bin",
-    "src"
+    "dist"
   ],
   "scripts": {
-    "start": "node ./bin/mcpm.js",
+    "start": "node ./dist/bin/mcpm.js",
+    "build": "tsc -p tsconfig.json && npm run build --prefix features/launcher",
+    "prestart": "npm run build",
+    "pretest": "npm run build",
     "test": "node --test --test-concurrency=1",
-    "check": "node --check ./bin/mcpm.js && node --check ./src/api.js && node --check ./src/config.js && node --check ./src/downloader.js && node --check ./src/installer.js && node --check ./src/versioning.js && node --check ./features/launcher/src/auth.js && node --check ./features/launcher/src/downloads.js && node --check ./features/launcher/src/metadata.js && node --check ./features/launcher/src/java-runtime.js && node --check ./features/launcher/src/minecraft-runtime.js && node --check ./features/launcher/src/launch.js && node --check ./features/launcher/src/secure-storage.js && node --check ./features/launcher/src/index.js && node ./bin/mcpm.js --help"
+    "check": "tsc -p tsconfig.json --noEmit && npm run check --prefix features/launcher && tsc -p tsconfig.type-tests.json",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=18"
@@ -43,6 +46,8 @@
   },
   "devDependencies": {
     "@napi-rs/keyring": "^1.3.0",
-    "fflate": "^0.8.3"
+    "@types/node": "18.19.130",
+    "fflate": "^0.8.3",
+    "typescript": "7.0.2"
   }
 }

@@ -7,3 +7,5 @@ mcpm-lock.json
 .env
 *.dpapi
 microsoft_accounts.json
+dist/
+*.tsbuildinfo

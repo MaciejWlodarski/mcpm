@@ -7,8 +7,8 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Command } from 'commander';
 import { EventEmitter } from 'events';
-import { resolveInstallPlan, checkInstallPlan, applyInstallPlan } from '../src/installer.js';
-import { selectCompatibleVersion } from '../src/versioning.js';
+import { resolveInstallPlan, checkInstallPlan, applyInstallPlan } from '../dist/src/installer.js';
+import { selectCompatibleVersion } from '../dist/src/versioning.js';
 import {
   getProjectRootForConfig,
   getConfigPath,
@@ -18,30 +18,30 @@ import {
   resolveModsDir,
   writeConfig,
   writeLock
-} from '../src/config.js';
-import { removeCommand } from '../src/commands/remove.js';
-import { configCommand } from '../src/commands/configure.js';
-import { persistInitializedProject } from '../src/commands/init.js';
-import { updateProjects } from '../src/commands/update.js';
-import { upgradeCommand } from '../src/commands/upgrade.js';
-import { addFileCommand, openModsCommand } from '../src/commands/manual-mods.js';
-import { findManualMods } from '../src/manual-mods.js';
-import { openDirectory } from '../src/open-directory.js';
+} from '../dist/src/config.js';
+import { removeCommand } from '../dist/src/commands/remove.js';
+import { configCommand } from '../dist/src/commands/configure.js';
+import { persistInitializedProject } from '../dist/src/commands/init.js';
+import { updateProjects } from '../dist/src/commands/update.js';
+import { upgradeCommand } from '../dist/src/commands/upgrade.js';
+import { addFileCommand, openModsCommand } from '../dist/src/commands/manual-mods.js';
+import { findManualMods } from '../dist/src/manual-mods.js';
+import { openDirectory } from '../dist/src/open-directory.js';
 import {
   installFeature,
   listFeatures,
   loadInstalledFeatures,
   uninstallFeature
-} from '../src/features.js';
+} from '../dist/src/features.js';
 import {
   forgetProject,
   listProjects,
   registerProject,
   setActiveProject
-} from '../src/projects.js';
+} from '../dist/src/projects.js';
 
 const originalCwd = process.cwd();
-const cliPath = fileURLToPath(new URL('../bin/mcpm.js', import.meta.url));
+const cliPath = fileURLToPath(new URL('../dist/bin/mcpm.js', import.meta.url));
 const launcherFeaturePath = fileURLToPath(new URL('../features/launcher', import.meta.url));
 let temporaryDirectory;
 let originalFetch;

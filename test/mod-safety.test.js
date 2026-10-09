@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { applyInstallPlan, checkInstallPlan, installProjects, resolveInstallPlan } from '../src/installer.js';
-import { readLock, writeConfig, writeLock } from '../src/config.js';
-import { removeCommand } from '../src/commands/remove.js';
-import { updateProjects } from '../src/commands/update.js';
-import { filenameKey } from '../src/mod-files.js';
+import { applyInstallPlan, checkInstallPlan, installProjects, resolveInstallPlan } from '../dist/src/installer.js';
+import { readLock, writeConfig, writeLock } from '../dist/src/config.js';
+import { removeCommand } from '../dist/src/commands/remove.js';
+import { updateProjects } from '../dist/src/commands/update.js';
+import { filenameKey } from '../dist/src/mod-files.js';
 
 let root;
 let originalCwd;
