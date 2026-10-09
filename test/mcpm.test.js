@@ -6,6 +6,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Command } from 'commander';
+import { EventEmitter } from 'events';
 import { resolveInstallPlan, checkInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
 import {
@@ -23,6 +24,9 @@ import { configCommand } from '../src/commands/configure.js';
 import { persistInitializedProject } from '../src/commands/init.js';
 import { updateProjects } from '../src/commands/update.js';
 import { upgradeCommand } from '../src/commands/upgrade.js';
+import { addFileCommand, openModsCommand } from '../src/commands/manual-mods.js';
+import { findManualMods } from '../src/manual-mods.js';
+import { openDirectory } from '../src/open-directory.js';
 import {
   installFeature,
   listFeatures,
@@ -153,6 +157,149 @@ test('CLI separates mod updates from Minecraft version upgrades', () => {
   assert.match(result.stdout, /current/);
   assert.match(result.stdout, /forget <project>/);
   assert.match(result.stdout, /config \[options\]/);
+  assert.match(result.stdout, /add-file <path>/);
+  assert.match(result.stdout, /open-mods \[profile\]/);
+});
+
+test('manual JARs are discovered without registering files, directories, or managed mods', async () => {
+  await createUpgradeProject();
+  const modsDirectory = path.join(temporaryDirectory, 'mods');
+  for (const filename of ['Manual Mod.JAR', 'another.jar', 'notes.txt', 'disabled.jar.disabled']) {
+    await fs.writeFile(path.join(modsDirectory, filename), filename);
+  }
+  await fs.mkdir(path.join(modsDirectory, 'directory.jar'));
+  await fs.mkdir(path.join(modsDirectory, 'nested'));
+  await fs.writeFile(path.join(modsDirectory, 'nested', 'nested.jar'), 'nested');
+  const before = await snapshotProjectFiles();
+  const manual = await findManualMods(modsDirectory, await readLock());
+  assert.deepEqual(manual.map(mod => mod.filename), ['another.jar', 'Manual Mod.JAR']);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+  const result = spawnSync(process.execPath, [cliPath, 'list'], { encoding: 'utf8', env: process.env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Managed mods: 1/);
+  assert.match(result.stdout, /Manual mods:\s+2/);
+  assert.match(result.stdout, /Manual mods \(not managed by MCPM\)/);
+  assert.match(result.stdout, /Manual Mod.JAR.*\(manual, compatibility unknown\)/);
+  assert.doesNotMatch(result.stdout, /notes.txt|disabled.jar.disabled|directory.jar|nested.jar/);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('list shows a manual-only profile and does not create a missing mods directory', async () => {
+  await createUpgradeProject([]);
+  const modsDirectory = path.join(temporaryDirectory, 'mods');
+  await fs.writeFile(path.join(modsDirectory, 'manual.jar'), 'manual');
+  const run = () => spawnSync(process.execPath, [cliPath, 'list'], { encoding: 'utf8', env: process.env });
+  const listed = run();
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /Managed mods: 0/);
+  assert.match(listed.stdout, /manual.jar.*\(manual,/);
+  assert.doesNotMatch(listed.stdout, /No mods are installed/);
+  await fs.rm(modsDirectory, { recursive: true });
+  const before = await snapshotProjectFiles();
+  assert.deepEqual(await findManualMods(modsDirectory, await readLock()), []);
+  assert.equal(run().status, 0);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('manual JAR discovery includes file symlinks but ignores broken and directory symlinks', {
+  skip: process.platform === 'win32'
+}, async () => {
+  await createUpgradeProject([]);
+  const modsDirectory = path.join(temporaryDirectory, 'mods');
+  const source = path.join(temporaryDirectory, 'source.jar');
+  await fs.writeFile(source, 'manual');
+  await fs.symlink(source, path.join(modsDirectory, 'linked.jar'));
+  await fs.symlink(path.join(temporaryDirectory, 'missing.jar'), path.join(modsDirectory, 'broken.jar'));
+  await fs.symlink(temporaryDirectory, path.join(modsDirectory, 'directory.jar'));
+  assert.deepEqual((await findManualMods(modsDirectory, await readLock())).map(mod => mod.filename), ['linked.jar']);
+});
+
+test('add-file CLI copies a manual JAR, keeps its source, and leaves profile state unchanged', async () => {
+  await createUpgradeProject([]);
+  const source = path.join(temporaryDirectory, 'My Manual Mod.JAR');
+  await fs.writeFile(source, 'manual jar');
+  const before = await snapshotProjectFiles();
+  const result = spawnSync(process.execPath, [cliPath, 'add-file', './My Manual Mod.JAR'], {
+    encoding: 'utf8', env: process.env
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /My Manual Mod.JAR \(manual, not managed by MCPM\)/);
+  assert.equal(await fs.readFile(source, 'utf8'), 'manual jar');
+  assert.equal(await fs.readFile(path.join(temporaryDirectory, 'mods', 'My Manual Mod.JAR'), 'utf8'), 'manual jar');
+  const after = await snapshotProjectFiles();
+  delete after.mods.contents['My Manual Mod.JAR'];
+  after.mods.mtimeMs = before.mods.mtimeMs;
+  assert.deepEqual(after, before);
+  assert.deepEqual((await findManualMods(path.join(temporaryDirectory, 'mods'), await readLock()))
+    .map(mod => mod.filename), ['My Manual Mod.JAR']);
+});
+
+test('add-file refuses to overwrite existing files or adopt a missing managed filename', async () => {
+  await createUpgradeProject();
+  const source = path.join(temporaryDirectory, 'manual.jar');
+  const destination = path.join(temporaryDirectory, 'mods', 'manual.jar');
+  await fs.writeFile(source, 'new manual jar');
+  await fs.writeFile(destination, 'previous manual jar');
+  const before = await snapshotProjectFiles();
+  await assert.rejects(addFileCommand(source), /already exists.*not replaced/);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+  const managedSource = path.join(temporaryDirectory, 'root-old.jar');
+  await fs.writeFile(managedSource, 'replacement');
+  await fs.unlink(path.join(temporaryDirectory, 'mods', 'root-old.jar'));
+  const missingBefore = await snapshotProjectFiles();
+  await assert.rejects(addFileCommand(managedSource), /already managed by MCPM/);
+  assert.deepEqual(await snapshotProjectFiles(), missingBefore);
+  const invalidSource = path.join(temporaryDirectory, 'notes.txt');
+  await fs.writeFile(invalidSource, 'notes');
+  await assert.rejects(addFileCommand(invalidSource), /must be .jar files/);
+  await fs.mkdir(path.join(temporaryDirectory, 'directory.jar'));
+  await assert.rejects(addFileCommand('./directory.jar'), /must be a file/);
+});
+
+test('open-mods resolves the current or named profile without changing the active profile', async () => {
+  const first = path.join(temporaryDirectory, 'first');
+  const second = path.join(temporaryDirectory, 'second');
+  for (const root of [first, second]) {
+    await writeConfig({ minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './Custom Mods', mods: {} }, root);
+  }
+  await registerProject(first, { name: 'first' });
+  await registerProject(second, { name: 'second', activate: false });
+  const opened = [];
+  const services = { openDirectory: async directory => { opened.push(directory); } };
+  assert.equal(await openModsCommand('second', services), path.join(second, 'Custom Mods'));
+  assert.equal(await openModsCommand(null, services), path.join(first, 'Custom Mods'));
+  assert.deepEqual(opened, [path.join(second, 'Custom Mods'), path.join(first, 'Custom Mods')]);
+  assert.equal((await listProjects()).find(project => project.active).name, 'first');
+  assert.equal((await fs.stat(opened[0])).isDirectory(), true);
+  await assert.rejects(openModsCommand('second', {
+    openDirectory: async () => { throw new Error('File manager unavailable'); }
+  }), /File manager unavailable/);
+});
+
+test('folder opening preserves argument boundaries and reports file-manager failures', async () => {
+  const directory = path.join(temporaryDirectory, 'Mods with spaces & $characters');
+  const child = new EventEmitter();
+  let request;
+  const spawn = (executable, args, options) => {
+    request = { executable, args, options };
+    queueMicrotask(() => child.emit('close', 0));
+    return child;
+  };
+  await openDirectory(directory, { platform: 'darwin', spawn });
+  assert.equal(request.executable, 'open');
+  assert.deepEqual(request.args, [directory]);
+  assert.equal(request.options.shell, false);
+  await assert.rejects(openDirectory(directory, { platform: 'linux', spawn: () => {
+    const failed = new EventEmitter();
+    queueMicrotask(() => failed.emit('close', 1));
+    return failed;
+  } }), /Could not open the folder/);
+  await assert.rejects(openDirectory(directory, { platform: 'darwin', spawn: () => {
+    const failed = new EventEmitter();
+    queueMicrotask(() => failed.emit('error', new Error('open not found')));
+    return failed;
+  } }), /open not found/);
+  assert.throws(() => openDirectory(directory, { platform: 'freebsd' }), /not supported/);
 });
 
 test('beta setting is persisted in the project configuration and lock file', async () => {
@@ -421,6 +568,7 @@ test('upgrade --check accepts an empty mod profile without creating directories 
 
 test('upgrade --check CLI returns the compatibility status, handles flags, and leaves files unchanged', async () => {
   await createUpgradeProject();
+  await fs.writeFile(path.join(temporaryDirectory, 'mods', 'Manual Extra.jar'), 'manual jar');
   const preloadPath = path.join(temporaryDirectory, 'modrinth-fixture.cjs');
   const version = upgradeVersion('root', { version_type: 'beta', loaders: ['neoforge'] });
   await fs.writeFile(preloadPath, `
@@ -446,13 +594,64 @@ test('upgrade --check CLI returns the compatibility status, handles flags, and l
   assert.equal(compatible.status, 0, compatible.stderr + compatible.stdout);
   assert.match(compatible.stdout, /Compatible mod plan found/);
   assert.match(compatible.stdout, /Root: 1\.0\.0 -> 2\.0\.0/);
+  assert.match(compatible.stdout, /Manual mods excluded from this check:/);
+  assert.match(compatible.stdout, /Manual Extra.jar/);
   const blocked = run([]);
   assert.equal(blocked.status, 1, blocked.stderr + blocked.stdout);
   assert.match(blocked.stdout, /root: No release version is available/);
+  assert.match(blocked.stdout, /Manual mods excluded from this check:/);
   assert.deepEqual(await snapshotProjectFiles(), before);
   const help = spawnSync(process.execPath, [cliPath, 'upgrade', '--help'], { encoding: 'utf8', env: process.env });
   assert.equal(help.status, 0);
   assert.match(help.stdout, /--check/);
+});
+
+test('upgrade --check ignores manual JARs without asking the API about them or changing its result', async () => {
+  await createUpgradeProject();
+  const manualPath = path.join(temporaryDirectory, 'mods', 'manual.jar');
+  await fs.writeFile(manualPath, 'manual jar');
+  const before = await snapshotProjectFiles();
+  const result = await upgradeCommand('1.21.1', { check: true },
+    async () => assert.fail('Check must not invoke the installer'), {
+      getProject: async id => {
+        assert.equal(id, 'root');
+        return { id, slug: id, title: id };
+      },
+      getProjectVersions: async id => {
+        assert.equal(id, 'root');
+        return [upgradeVersion(id)];
+      }
+    });
+  assert.equal(result.compatible, true);
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.manualMods, [{ filename: 'manual.jar', path: manualPath }]);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('managed profile upgrades and removals preserve manual JARs', async () => {
+  await createUpgradeProject();
+  const manualPath = path.join(temporaryDirectory, 'mods', 'manual.jar');
+  await fs.writeFile(manualPath, 'manual jar');
+  const before = await fs.stat(manualPath);
+  globalThis.fetch = async input => {
+    const url = new URL(input);
+    if (url.origin === 'https://api.modrinth.com') {
+      const value = url.pathname.endsWith('/version')
+        ? [upgradeVersion('root')]
+        : { id: 'root', slug: 'root', title: 'Root' };
+      return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+    }
+    assert.equal(input, 'https://example.test/root.jar');
+    return new Response('new managed jar');
+  };
+  const result = await upgradeCommand('1.21.1');
+  assert.equal(result.config.minecraftVersion, '1.21.1');
+  assert.equal(await fs.readFile(manualPath, 'utf8'), 'manual jar');
+  assert.equal((await fs.stat(manualPath)).mtimeMs, before.mtimeMs);
+  await removeCommand('root');
+  assert.deepEqual(await fs.readdir(path.join(temporaryDirectory, 'mods')), ['manual.jar']);
+  assert.equal(await fs.readFile(manualPath, 'utf8'), 'manual jar');
+  assert.equal((await fs.stat(manualPath)).mtimeMs, before.mtimeMs);
 });
 
 test('update skips an incompatible mod and updates the remaining mods', async () => {

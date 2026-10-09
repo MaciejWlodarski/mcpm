@@ -7,6 +7,7 @@ import { installCommand } from '../src/commands/install.js';
 import { removeCommand } from '../src/commands/remove.js';
 import { updateCommand } from '../src/commands/update.js';
 import { listCommand } from '../src/commands/list.js';
+import { addFileCommand, openModsCommand } from '../src/commands/manual-mods.js';
 import { upgradeCommand } from '../src/commands/upgrade.js';
 import { currentCommand, forgetCommand, projectsCommand, useCommand } from '../src/commands/projects.js';
 import { configCommand } from '../src/commands/configure.js';
@@ -93,6 +94,16 @@ program
   .action(installCommand);
 
 program
+  .command('add-file <path>')
+  .description('Copy a local JAR into the current profile as a manual mod')
+  .action(source => addFileCommand(source));
+
+program
+  .command('open-mods [profile]')
+  .description('Open the mods folder for the current or selected profile')
+  .action(profile => openModsCommand(profile));
+
+program
   .command('remove <slug>')
   .alias('uninstall')
   .description('Remove a mod and its orphaned dependencies')
@@ -114,8 +125,8 @@ program
   .command('upgrade <version>')
   .option('-b, --beta', 'Allow beta releases for the new game version')
   .option('--loader <loader>', 'Change the mod loader while upgrading')
-  .option('--check', 'Check all mod versions and dependencies without changing the profile')
-  .description('Upgrade the Minecraft version, loader, and complete mod set')
+  .option('--check', 'Check managed mod versions and dependencies without changing the profile')
+  .description('Upgrade the Minecraft version, loader, and managed mods')
   .action(async (version, options) => {
     const result = await upgradeCommand(version, options);
     if (options.check && result?.compatible === false) process.exitCode = 1;

@@ -71,6 +71,8 @@ mcpm config --java auto
 
 mcpm search <query>
 mcpm install <slug>
+mcpm add-file <path-to-jar>
+mcpm open-mods [profile]
 mcpm remove <slug>
 mcpm update
 mcpm upgrade <version>
@@ -120,6 +122,26 @@ The project directory is the game directory by default. If `gameDir` and
 `mods` directory to the MCPM-managed mod directory using a directory link. It
 refuses to replace a non-empty unmanaged directory.
 
+### Manual mods
+
+Run `mcpm open-mods` to open the current profile's configured mods directory in
+Finder, Explorer, or the Linux file manager. `mcpm open-mods <name-or-path>` opens
+another profile without changing the active one. A missing mods directory is
+created automatically.
+
+You can drop local `.jar` files into that folder or copy one with
+`mcpm add-file "/path/to/My Mod.jar"`. This keeps the source file and refuses to
+replace an existing JAR or a filename already managed by MCPM.
+
+`mcpm list` discovers JARs whose filenames are absent from the MCPM lockfile and
+labels them as manual mods with unknown compatibility. These files stay outside
+the managed mod list and are not automatically updated or removed. To remove a
+manual mod, delete its JAR from the folder.
+
+`upgrade --check` lists manual JARs as excluded from the check. Its compatibility
+result and exit status refer only to managed mods. A regular upgrade leaves
+manual JARs unchanged and lists the files that it did not update.
+
 ## Updating and upgrading
 
 `mcpm update` checks every direct mod for the profile's current Minecraft
@@ -129,7 +151,7 @@ dependency graph, so updating one mod cannot silently break another mod's
 required dependencies.
 
 `mcpm upgrade <version>` performs a profile migration. MCPM resolves a complete
-compatible mod graph for the new Minecraft version before replacing any files or
+compatible graph of managed mods for the new Minecraft version before replacing any files or
 saving the new configuration. `--loader <loader>` changes the loader in the same
 transaction. The next launch automatically prepares the matching game and loader
 runtime from the shared cache.

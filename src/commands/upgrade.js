@@ -1,6 +1,7 @@
 import pc from 'picocolors';
-import { getProjectRootForConfig, isInitialized, readConfig, readLock } from '../config.js';
+import { getProjectRootForConfig, isInitialized, readConfig, readLock, resolveModsDir } from '../config.js';
 import { checkInstallPlan, installProjects } from '../installer.js';
+import { findManualMods } from '../manual-mods.js';
 
 const SUPPORTED_LOADERS = new Set(['fabric', 'forge', 'neoforge', 'quilt']);
 
@@ -43,6 +44,7 @@ export async function upgradeCommand(newVersion, options = {}, installer = insta
     installed: {}
   };
   const directMods = Object.keys(nextConfig.mods || {});
+  const manualMods = await findManualMods(resolveModsDir(currentConfig, projectRoot), currentLock);
 
   if (options.check) {
     console.log(pc.cyan(
@@ -50,6 +52,7 @@ export async function upgradeCommand(newVersion, options = {}, installer = insta
       `${newVersion}/${nextLoader} for ${directMods.length} direct mods...`
     ));
     const result = await checkInstallPlan(directMods, nextConfig, options, services);
+    result.manualMods = manualMods;
     if (!result.compatible) {
       console.log(pc.red('Upgrade check failed:'));
       for (const failure of result.failures) {
@@ -69,8 +72,17 @@ export async function upgradeCommand(newVersion, options = {}, installer = insta
         );
       }
     }
+    if (manualMods.length > 0) {
+      console.log(pc.yellow('Manual mods excluded from this check:'));
+      for (const mod of manualMods) console.log(`  ${mod.filename}`);
+    }
     console.log('No files were downloaded or changed.');
     return result;
+  }
+
+  if (manualMods.length > 0) {
+    console.warn(pc.yellow('Manual mods are not updated by MCPM; verify their compatibility separately:'));
+    for (const mod of manualMods) console.warn(`  ${mod.filename} (left unchanged)`);
   }
 
   console.log(pc.cyan(

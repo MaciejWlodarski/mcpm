@@ -6,6 +6,7 @@ import {
   readLock,
   resolveModsDir
 } from '../config.js';
+import { findManualMods } from '../manual-mods.js';
 
 /**
  * Lists all installed mods with their versions, installation type, and dependency mappings.
@@ -18,6 +19,8 @@ export async function listCommand() {
   const config = await readConfig();
   const projectRoot = getProjectRootForConfig(config);
   const lock = await readLock(projectRoot);
+  const modsDirectory = resolveModsDir(config, projectRoot);
+  const manualMods = await findManualMods(modsDirectory, lock);
 
   const installedCount = Object.keys(lock.installed).length;
   
@@ -25,10 +28,11 @@ export async function listCommand() {
   console.log(`  Project:   ${pc.cyan(projectRoot)}`);
   console.log(`  Minecraft: ${pc.cyan(config.minecraftVersion)}`);
   console.log(`  Loader:    ${pc.cyan(config.loader)}`);
-  console.log(`  Directory: ${pc.cyan(resolveModsDir(config, projectRoot))}`);
-  console.log(`  Installed mods: ${pc.cyan(installedCount)}\n`);
+  console.log(`  Directory: ${pc.cyan(modsDirectory)}`);
+  console.log(`  Managed mods: ${pc.cyan(installedCount)}`);
+  console.log(`  Manual mods:  ${pc.yellow(manualMods.length)}\n`);
 
-  if (installedCount === 0) {
+  if (installedCount === 0 && manualMods.length === 0) {
     console.log(pc.yellow('No mods are installed.'));
     return;
   }
@@ -70,7 +74,7 @@ export async function listCommand() {
     
     if (mod.isDependency && mod.dependents.length > 0) {
       console.log(`  ${pc.gray('Required by: ')}${pc.yellow(mod.dependents.join(', '))}`);
-    } else if (!mod.isDependency && mod.dependencies.length > 0) {
+    } else if (!mod.isDependency && (mod.dependencies || []).length > 0) {
       const depNames = mod.dependencies.map(depId => {
         const depMod = lock.installed[depId];
         return depMod ? depMod.title : depId;
@@ -78,5 +82,11 @@ export async function listCommand() {
       console.log(`  ${pc.gray('Depends on: ')}${pc.cyan(depNames.join(', '))}`);
     }
   });
+  if (manualMods.length > 0) {
+    console.log(pc.bold('\nManual mods (not managed by MCPM):'));
+    for (const mod of manualMods) {
+      console.log(`- ${pc.bold(mod.filename)} ${pc.yellow('(manual, compatibility unknown)')}`);
+    }
+  }
   console.log();
 }
