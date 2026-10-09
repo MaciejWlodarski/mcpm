@@ -12,7 +12,7 @@ launcher.
 ## Requirements
 
 - Node.js 18 or newer
-- Windows for secure account storage through DPAPI
+- Windows (DPAPI) or macOS (Keychain) for secure account storage
 - A licensed Minecraft: Java Edition Microsoft account
 
 Java does not need to be installed manually. MCPM uses a compatible system Java
@@ -203,8 +203,14 @@ The local authentication chain is:
 5. Minecraft entitlement and profile lookup
 
 There is no MCPM authentication server. On Windows, the saved session is
-encrypted with DPAPI in the `CurrentUser` scope. `mcpm launcher logout` deletes
-it. MCPM does not collect analytics, passwords, email addresses, or tokens.
+encrypted with DPAPI in the `CurrentUser` scope. On macOS, it is stored in
+Keychain by default. If Keychain is unavailable, explicitly select
+`mcpm launcher login --storage=file` to use a plaintext session file protected
+by `0600` permissions in a `0700` credentials directory. Processes running as
+your macOS user can read this fallback. The backend selection is remembered,
+including after logout; `--storage=keychain` switches back to Keychain.
+`mcpm launcher logout` removes the saved session. MCPM does not collect
+analytics, passwords, email addresses, or tokens.
 
 ## Transaction and download safety
 

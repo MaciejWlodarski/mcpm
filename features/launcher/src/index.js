@@ -146,16 +146,30 @@ export async function launcherStatusCommand(api, profile = null, services = {}) 
   return status;
 }
 
-export async function launcherLoginCommand(api, services = {}) {
+export async function launcherLoginCommand(api, options = {}, services = {}) {
   const stateDirectory = api.getStateDirectory();
   const readSessionImpl = services.readSession || readSession;
   const createSessionImpl = services.createSession || createMinecraftSession;
-  const clearSessionImpl = services.clearSession || clearSession;
   const saveSessionImpl = services.saveSession || saveSession;
+  if (options.storage && process.platform !== 'darwin') {
+    throw new Error('--storage is currently supported only on macOS.');
+  }
+  if (options.storage && !['keychain', 'file'].includes(options.storage)) {
+    throw new Error('--storage must be either "keychain" or "file".');
+  }
+  if (options.storage === 'file') {
+    console.warn(
+      'Warning: file storage protects the launcher session from other system users, ' +
+      'but processes running as your macOS user can read it.'
+    );
+  }
   let existing = null;
   try {
-    existing = await readSessionImpl(stateDirectory);
+    existing = await readSessionImpl(stateDirectory, { storage: options.storage });
   } catch (error) {
+    if (['MCPM_KEYCHAIN_UNAVAILABLE', 'MCPM_STORAGE_PREFERENCE_UNREADABLE'].includes(error.code)) {
+      throw error;
+    }
     console.warn(`The saved launcher session cannot be read and will be replaced: ${error.message}`);
   }
   if (existing) {
@@ -172,8 +186,7 @@ export async function launcherLoginCommand(api, services = {}) {
       console.log('\nWaiting for confirmation in your browser...');
     }
   });
-  if (!existing) await clearSessionImpl(stateDirectory);
-  await saveSessionImpl(stateDirectory, session);
+  await saveSessionImpl(stateDirectory, session, { storage: options.storage });
   console.log(`\nSigned in as ${session.profile.name} (${session.profile.id}).`);
   return session;
 }
@@ -352,7 +365,8 @@ export async function registerFeature({ program, api }) {
   launcher
     .command('login')
     .description('Sign in to Minecraft with a Microsoft device code')
-    .action(() => launcherLoginCommand(api));
+    .option('--storage <backend>', 'On macOS, select and remember "keychain" or explicit "file" storage')
+    .action(options => launcherLoginCommand(api, options));
 
   launcher
     .command('account')

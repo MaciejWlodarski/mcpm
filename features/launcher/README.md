@@ -10,6 +10,8 @@ mcpm profile <name-or-path>
 mcpm launcher status [profile]
 mcpm launcher prepare [profile]
 mcpm launcher login
+mcpm launcher login --storage=file
+mcpm launcher login --storage=keychain
 mcpm launcher account
 mcpm launcher account --refresh
 mcpm launcher logout
@@ -30,7 +32,14 @@ launching fails explicitly until their runtime adapters are implemented.
 `login` uses Microsoft Device Code Flow and exchanges the result through Xbox
 Live, XSTS, and Minecraft Services. The account is shared by all profiles. On
 Windows, the refresh token and Minecraft session are encrypted for the current
-user with DPAPI.
+user with DPAPI. On macOS, MCPM uses the native Keychain through the `SecItem`
+API by default. If a user's login Keychain is unavailable, they may explicitly
+select `--storage=file`. The fallback stores the session atomically with
+user-only filesystem permissions (`0600`, inside a `0700` credentials
+directory). Processes running as the same macOS user can read that fallback
+file, so protect the account with a strong password and FileVault.
+The selected backend is remembered for later sign-ins and session refreshes,
+including after logout. Use `--storage=keychain` to switch back to Keychain.
 
 The public MCPM client ID can be overridden during development with
 `MCPM_MICROSOFT_CLIENT_ID`.

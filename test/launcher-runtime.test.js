@@ -322,6 +322,8 @@ test('metadata paths cannot escape their launcher cache directory', () => {
 });
 
 test('one-off and stored Java paths use the correct base directory', async () => {
+  const projectRoot = path.join(os.tmpdir(), 'mcpm-java-profile');
+  const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java';
   const inspected = [];
   const inspectJava = executable => {
     inspected.push(executable);
@@ -329,13 +331,13 @@ test('one-off and stored Java paths use the correct base directory', async () =>
   };
   await resolveJava({ javaVersion: { majorVersion: 21 } }, {
     minecraftVersion: '1.21.1', launcher: { javaPath: './stored-jdk' }
-  }, os.tmpdir(), { projectRoot: 'C:\\profiles\\test', inspectJava });
-  assert.equal(inspected.pop(), path.join('C:\\profiles\\test', 'stored-jdk', 'bin', 'java.exe'));
+  }, os.tmpdir(), { projectRoot, inspectJava });
+  assert.equal(inspected.pop(), path.join(projectRoot, 'stored-jdk', 'bin', javaExecutable));
 
   await resolveJava({ javaVersion: { majorVersion: 21 } }, {
     minecraftVersion: '1.21.1'
   }, os.tmpdir(), { java: './one-off-jdk', inspectJava });
-  assert.equal(inspected.pop(), path.resolve('./one-off-jdk', 'bin', 'java.exe'));
+  assert.equal(inspected.pop(), path.resolve('./one-off-jdk', 'bin', javaExecutable));
 });
 
 test('launch rejects a maximum heap lower than the configured minimum', () => {
@@ -395,19 +397,75 @@ test('a stale runtime marker is not reported as prepared', async () => {
 });
 
 test('login can replace an unreadable saved session after successful authentication', async () => {
-  let cleared = false;
   let saved = null;
+  let saveOptions = null;
   const session = {
     profile: { name: 'Steve', id: 'uuid' }, minecraft: { accessToken: 'token' }
   };
-  await launcherLoginCommand({ getStateDirectory: () => 'state' }, {
+  await launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
     readSession: async () => { throw new Error('corrupt DPAPI data'); },
     createSession: async () => session,
-    clearSession: async () => { cleared = true; },
-    saveSession: async (_state, value) => { saved = value; }
+    saveSession: async (_state, value, options) => {
+      saved = value;
+      saveOptions = options;
+    }
   });
-  assert.equal(cleared, true);
   assert.equal(saved, session);
+  assert.equal(saveOptions.storage, undefined);
+});
+
+test('login stops before authentication when the selected storage cannot be read', async () => {
+  for (const code of ['MCPM_KEYCHAIN_UNAVAILABLE', 'MCPM_STORAGE_PREFERENCE_UNREADABLE']) {
+    let authenticated = false;
+    let saved = false;
+    const error = Object.assign(new Error('storage unavailable'), { code });
+    await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
+      readSession: async () => { throw error; },
+      createSession: async () => { authenticated = true; },
+      saveSession: async () => { saved = true; }
+    }), error);
+    assert.equal(authenticated, false);
+    assert.equal(saved, false);
+  }
+});
+
+test('failed authentication leaves the saved launcher session untouched', async () => {
+  let saved = false;
+  let cleared = false;
+  await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
+    readSession: async () => ({ profile: { name: 'Alex' } }),
+    createSession: async () => { throw new Error('sign-in cancelled'); },
+    saveSession: async () => { saved = true; },
+    clearSession: async () => { cleared = true; }
+  }), /sign-in cancelled/);
+  assert.equal(saved, false);
+  assert.equal(cleared, false);
+});
+
+test('macOS login passes the explicitly selected backend to storage', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const calls = [];
+  const session = { profile: { name: 'Alex', id: 'uuid' } };
+  await launcherLoginCommand({ getStateDirectory: () => 'state' }, { storage: 'file' }, {
+    readSession: async (state, options) => { calls.push({ state, options }); return null; },
+    createSession: async () => session,
+    saveSession: async (state, value, options) => { calls.push({ state, value, options }); }
+  });
+  assert.deepEqual(calls, [
+    { state: 'state', options: { storage: 'file' } },
+    { state: 'state', value: session, options: { storage: 'file' } }
+  ]);
+});
+
+test('login rejects unsupported storage options before touching the saved session', async () => {
+  let read = false;
+  await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {
+    storage: process.platform === 'darwin' ? 'unknown' : 'file'
+  }, {
+    readSession: async () => { read = true; }
+  }), /--storage/);
+  assert.equal(read, false);
 });
 
 test('one malformed profile does not abort the complete profile list', async () => {

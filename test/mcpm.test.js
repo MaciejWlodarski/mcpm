@@ -56,7 +56,7 @@ async function createProjectState(config, lock) {
 }
 
 test.beforeEach(async () => {
-  temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-test-'));
+  temporaryDirectory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-test-')));
   process.chdir(temporaryDirectory);
   originalFetch = globalThis.fetch;
   originalStateDirectory = process.env.MCPM_STATE_DIR;
@@ -134,14 +134,15 @@ test('beta setting is persisted in the project configuration and lock file', asy
   assert.equal((await readLock()).allowBeta, false);
   await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
 
+  const javaPath = path.join(temporaryDirectory, 'Java', 'jdk-25');
   await configCommand({
-    java: 'C:\\Java\\jdk-25',
+    java: javaPath,
     memory: '6g',
     resolution: '1600x900',
     gameDir: './game'
   });
   const launchConfig = await readConfig();
-  assert.equal(launchConfig.launcher.javaPath, 'C:\\Java\\jdk-25');
+  assert.equal(launchConfig.launcher.javaPath, javaPath);
   assert.equal(launchConfig.launcher.memory.max, '6G');
   assert.deepEqual(launchConfig.launcher.resolution, { width: 1600, height: 900 });
   assert.equal(launchConfig.gameDir, './game');

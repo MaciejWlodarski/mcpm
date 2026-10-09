@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import {
   exchangeMicrosoftTokenForMinecraft,
   MICROSOFT_SCOPES,
@@ -168,6 +169,220 @@ test('Windows DPAPI encrypts the session for the current user', {
     await saveSession(stateDirectory, session);
     const stored = await fs.readFile(getCredentialPath(stateDirectory), 'utf8');
     assert.doesNotMatch(stored, /refresh-token|Alex/);
+    assert.deepEqual(await readSession(stateDirectory), session);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS session storage is restricted to the current user', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-macos-'));
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const createKeychainEntry = () => ({
+    deleteCredential() { throw new Error('login keychain unavailable'); }
+  });
+  try {
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
+    const credentialPath = getCredentialPath(stateDirectory);
+    const stored = await fs.readFile(credentialPath, 'utf8');
+    assert.match(stored, /^macos-user-file:v1\n/);
+    assert.equal((await fs.stat(credentialPath)).mode & 0o777, 0o600);
+    assert.equal((await fs.stat(path.dirname(credentialPath))).mode & 0o777, 0o700);
+    assert.deepEqual(await readSession(stateDirectory), session);
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry }), true);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS stores the launcher session in the native Keychain by default', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-keychain-'));
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  let stored = null;
+  const createKeychainEntry = () => ({
+    setPassword(value) { stored = value; },
+    getPassword() { return stored; },
+    deleteCredential() {
+      const existed = stored !== null;
+      stored = null;
+      return existed;
+    }
+  });
+  try {
+    await saveSession(stateDirectory, session, { createKeychainEntry });
+    await assert.rejects(fs.access(getCredentialPath(stateDirectory)), { code: 'ENOENT' });
+    assert.deepEqual(await readSession(stateDirectory, { createKeychainEntry }), session);
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry }), true);
+    assert.equal(stored, null);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS Keychain failures recommend the explicit file fallback', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-keychain-'));
+  const createKeychainEntry = () => ({
+    getPassword() { throw new Error('login keychain unavailable'); }
+  });
+  try {
+    await assert.rejects(
+      readSession(stateDirectory, { createKeychainEntry }),
+      error => error.code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
+        /--storage=file/.test(error.message)
+    );
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS reads and removes a session from the previous file location', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-legacy-'));
+  const legacyPath = path.join(stateDirectory, 'features', 'launcher-account.dpapi');
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const createKeychainEntry = () => ({
+    deleteCredential() { throw new Error('login keychain unavailable'); }
+  });
+  try {
+    await fs.mkdir(path.dirname(legacyPath), { recursive: true });
+    await fs.writeFile(legacyPath, `macos-user-file:v1\n${JSON.stringify(session)}`, {
+      mode: 0o600
+    });
+    assert.deepEqual(await readSession(stateDirectory), session);
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry }), true);
+    await assert.rejects(fs.access(legacyPath), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS file storage remains usable without the native Keychain dependency', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-no-binding-'));
+  const modulePath = path.join(stateDirectory, 'secure-storage.mjs');
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  try {
+    await fs.copyFile(new URL('../features/launcher/src/secure-storage.js', import.meta.url), modulePath);
+    const isolatedStorage = await import(pathToFileURL(modulePath).href);
+    await assert.rejects(
+      isolatedStorage.readSession(stateDirectory),
+      error => error.code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
+        error.cause.code === 'ERR_MODULE_NOT_FOUND'
+    );
+    await isolatedStorage.saveSession(stateDirectory, session, { storage: 'file' });
+    assert.deepEqual(await isolatedStorage.readSession(stateDirectory), session);
+    assert.equal(await isolatedStorage.clearSession(stateDirectory), true);
+    assert.equal(await isolatedStorage.readSession(stateDirectory), null);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS file logout cannot resurrect an older session when Keychain cleanup fails', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-logout-'));
+  const oldSession = { profile: { name: 'Old' }, secret: 'old-refresh-token' };
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const brokenKeychain = () => ({
+    deleteCredential() { throw new Error('login keychain unavailable'); }
+  });
+  const unlockedKeychain = () => ({
+    getPassword() { return JSON.stringify(oldSession); }
+  });
+  try {
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry: brokenKeychain });
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry: brokenKeychain }), true);
+    assert.equal(await readSession(stateDirectory, { createKeychainEntry: unlockedKeychain }), null);
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry: brokenKeychain }), false);
+    await saveSession(stateDirectory, session, { createKeychainEntry: brokenKeychain });
+    assert.deepEqual(await readSession(stateDirectory), session);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('macOS backend switching removes the old session and remembers the choice for refreshes', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-switch-'));
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const refreshed = { ...session, secret: 'new-refresh-token' };
+  let stored = null;
+  const createKeychainEntry = () => ({
+    setPassword(value) { stored = value; },
+    getPassword() { return stored; },
+    deleteCredential() {
+      const existed = stored !== null;
+      stored = null;
+      return existed;
+    }
+  });
+  try {
+    await saveSession(stateDirectory, session, { createKeychainEntry });
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
+    assert.equal(stored, null);
+    await saveSession(stateDirectory, refreshed, { createKeychainEntry });
+    assert.equal(stored, null);
+    assert.deepEqual(await readSession(stateDirectory), refreshed);
+
+    await saveSession(stateDirectory, refreshed, { storage: 'keychain', createKeychainEntry });
+    await assert.rejects(fs.access(getCredentialPath(stateDirectory)), { code: 'ENOENT' });
+    assert.deepEqual(await readSession(stateDirectory, { createKeychainEntry }), refreshed);
+    assert.equal(await clearSession(stateDirectory, { createKeychainEntry }), true);
+    assert.equal(await readSession(stateDirectory, { createKeychainEntry }), null);
+    await saveSession(stateDirectory, session, { createKeychainEntry });
+    assert.deepEqual(JSON.parse(stored), session);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('a failed macOS Keychain save preserves the previous file session and preference', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-save-failure-'));
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const createKeychainEntry = () => ({
+    deleteCredential() { return false; },
+    setPassword() { throw new Error('login keychain unavailable'); }
+  });
+  try {
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
+    await assert.rejects(
+      saveSession(stateDirectory, { ...session, secret: 'new-token' }, {
+        storage: 'keychain', createKeychainEntry
+      }),
+      { code: 'MCPM_KEYCHAIN_UNAVAILABLE' }
+    );
+    assert.deepEqual(await readSession(stateDirectory), session);
+  } finally {
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable macOS storage preference requires an explicit backend to recover', {
+  skip: process.platform !== 'darwin'
+}, async () => {
+  const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-preference-'));
+  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const createKeychainEntry = () => ({ deleteCredential() { return false; } });
+  try {
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
+    await fs.writeFile(path.join(stateDirectory, 'credentials', 'launcher-storage.json'), '{broken');
+    await assert.rejects(readSession(stateDirectory), {
+      code: 'MCPM_STORAGE_PREFERENCE_UNREADABLE'
+    });
+    assert.deepEqual(await readSession(stateDirectory, { storage: 'file' }), session);
+    await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
     assert.deepEqual(await readSession(stateDirectory), session);
   } finally {
     await fs.rm(stateDirectory, { recursive: true, force: true });
