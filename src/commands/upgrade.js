@@ -1,15 +1,15 @@
 import pc from 'picocolors';
 import { getProjectRootForConfig, isInitialized, readConfig, readLock } from '../config.js';
-import { installProjects } from '../installer.js';
+import { checkInstallPlan, installProjects } from '../installer.js';
 
 const SUPPORTED_LOADERS = new Set(['fabric', 'forge', 'neoforge', 'quilt']);
 
 /**
- * Changes the Minecraft version and reinstalls all direct mods atomically.
+ * Checks a migration or changes the Minecraft version and reinstalls all direct mods atomically.
  * @param {string} newVersion The new Minecraft version.
  * @param {object} options Command line options.
  */
-export async function upgradeCommand(newVersion, options = {}, installer = installProjects) {
+export async function upgradeCommand(newVersion, options = {}, installer = installProjects, services = {}) {
   if (!newVersion || newVersion.trim() === '') {
     throw new Error('Provide the new Minecraft version. Example: mcpm upgrade 1.21.1');
   }
@@ -28,7 +28,7 @@ export async function upgradeCommand(newVersion, options = {}, installer = insta
     );
   }
 
-  if (currentConfig.minecraftVersion === newVersion && currentConfig.loader === nextLoader) {
+  if (!options.check && currentConfig.minecraftVersion === newVersion && currentConfig.loader === nextLoader) {
     console.log(pc.yellow(`The project already uses Minecraft ${newVersion} with ${nextLoader}.`));
     return null;
   }
@@ -43,6 +43,35 @@ export async function upgradeCommand(newVersion, options = {}, installer = insta
     installed: {}
   };
   const directMods = Object.keys(nextConfig.mods || {});
+
+  if (options.check) {
+    console.log(pc.cyan(
+      `Checking profile migration ${currentConfig.minecraftVersion}/${currentConfig.loader} -> ` +
+      `${newVersion}/${nextLoader} for ${directMods.length} direct mods...`
+    ));
+    const result = await checkInstallPlan(directMods, nextConfig, options, services);
+    if (!result.compatible) {
+      console.log(pc.red('Upgrade check failed:'));
+      for (const failure of result.failures) {
+        console.log(`  ${failure.slug || 'Shared mod plan'}: ${failure.message}`);
+      }
+    } else {
+      console.log(pc.green(
+        `Compatible mod plan found for Minecraft ${newVersion} with ${nextLoader} ` +
+        `(${result.plan.items.size} mods including required dependencies):`
+      ));
+      for (const [projectId, item] of result.plan.items) {
+        const installed = currentLock.installed?.[projectId];
+        const previousVersion = installed ? installed.version || 'unknown version' : 'not installed';
+        console.log(
+          `  ${item.project.title}: ${previousVersion} -> ${item.version.version_number}` +
+          (item.isDependency ? ' (dependency)' : '')
+        );
+      }
+    }
+    console.log('No files were downloaded or changed.');
+    return result;
+  }
 
   console.log(pc.cyan(
     `Preparing profile migration ${currentConfig.minecraftVersion}/${currentConfig.loader} -> ` +

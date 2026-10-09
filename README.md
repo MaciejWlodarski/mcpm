@@ -74,6 +74,7 @@ mcpm install <slug>
 mcpm remove <slug>
 mcpm update
 mcpm upgrade <version>
+mcpm upgrade <version> --check
 mcpm upgrade <version> --loader fabric
 mcpm list
 
@@ -132,6 +133,13 @@ compatible mod graph for the new Minecraft version before replacing any files or
 saving the new configuration. `--loader <loader>` changes the loader in the same
 transaction. The next launch automatically prepares the matching game and loader
 runtime from the shared cache.
+
+Use `mcpm upgrade <version> --check` to resolve the migration without downloading
+JARs or changing any profile files. It prints the target mod versions or reports
+blocking direct mods and conflicts in the shared dependency plan. `--loader` and
+`--beta` also apply to the check. Exit status is `0` for a compatible plan and `1`
+when the plan is blocked or cannot be verified. Compatibility is based on
+Modrinth metadata; this check does not test game execution.
 
 Beta support is persistent per profile:
 

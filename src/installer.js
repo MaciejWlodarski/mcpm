@@ -152,6 +152,79 @@ export async function resolveInstallPlan(rootSlugs, config, options = {}, servic
   return { items, rootProjectIds, versionToProject, allowBeta };
 }
 
+function getPlanFiles(plan) {
+  const files = new Map();
+  const targetOwners = new Map();
+  for (const [projectId, item] of plan.items) {
+    const file = (item.version.files || []).find(candidate => candidate.primary) || item.version.files?.[0];
+    if (!file) {
+      throw new Error(`No downloadable file found for ${item.project.title} ${item.version.version_number}`);
+    }
+    validateFilename(file.filename);
+    const owner = targetOwners.get(file.filename);
+    if (owner && owner !== projectId) {
+      throw new Error(`Two mods are trying to install the same file: ${file.filename}`);
+    }
+    targetOwners.set(file.filename, projectId);
+    files.set(projectId, file);
+  }
+  return files;
+}
+
+export async function checkInstallPlan(rootSlugs, config, options = {}, services = {}) {
+  const cachedServices = {};
+  for (const [name, implementation] of Object.entries({
+    getProject: services.getProject || getProject,
+    getProjectVersions: services.getProjectVersions || getProjectVersions,
+    getVersion: services.getVersion || getVersion
+  })) {
+    const requests = new Map();
+    cachedServices[name] = (...args) => {
+      const key = JSON.stringify(args);
+      if (!requests.has(key)) {
+        requests.set(key, Promise.resolve().then(() => implementation(...args)));
+      }
+      return requests.get(key);
+    };
+  }
+
+  // The full plan is authoritative: another mod may pin a dependency to a
+  // compatible version that an isolated check would not select on its own.
+  let fullPlanError;
+  try {
+    const plan = await resolveInstallPlan(rootSlugs, config, options, cachedServices);
+    getPlanFiles(plan);
+    return { compatible: true, plan, failures: [] };
+  } catch (error) {
+    fullPlanError = error;
+    // Diagnose every root and the remaining shared graph after a failed plan.
+  }
+
+  const failures = [];
+  const compatibleRoots = [];
+  for (const slug of [...new Set(rootSlugs)]) {
+    try {
+      const plan = await resolveInstallPlan([slug], config, options, cachedServices);
+      getPlanFiles(plan);
+      compatibleRoots.push(slug);
+    } catch (error) {
+      failures.push({ slug, message: error.message });
+    }
+  }
+
+  // Individual mods can resolve successfully while their shared dependencies conflict.
+  let plan = null;
+  try {
+    plan = await resolveInstallPlan(compatibleRoots, config, options, cachedServices);
+    getPlanFiles(plan);
+  } catch (error) {
+    failures.push({ slug: null, message: error.message });
+    plan = null;
+  }
+  if (failures.length === 0) failures.push({ slug: null, message: fullPlanError.message });
+  return { compatible: false, plan, failures };
+}
+
 function collectRequiredDependencies(installed) {
   const required = new Set();
 
@@ -201,20 +274,10 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
     owners.add(projectId);
     managedFileOwners.set(mod.filename, owners);
   }
-  const targetOwners = new Map();
+  const planFiles = getPlanFiles(plan);
 
   for (const [projectId, item] of plan.items) {
-    const file = (item.version.files || []).find(candidate => candidate.primary) || item.version.files?.[0];
-    if (!file) {
-      throw new Error(`No downloadable file found for ${item.project.title} ${item.version.version_number}`);
-    }
-    validateFilename(file.filename);
-
-    const owner = targetOwners.get(file.filename);
-    if (owner && owner !== projectId) {
-      throw new Error(`Two mods are trying to install the same file: ${file.filename}`);
-    }
-    targetOwners.set(file.filename, projectId);
+    const file = planFiles.get(projectId);
 
     const old = nextLock.installed[projectId];
     const remainsDirect = old?.isDependency === false;

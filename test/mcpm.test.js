@@ -6,7 +6,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Command } from 'commander';
-import { resolveInstallPlan, applyInstallPlan } from '../src/installer.js';
+import { resolveInstallPlan, checkInstallPlan, applyInstallPlan } from '../src/installer.js';
 import { selectCompatibleVersion } from '../src/versioning.js';
 import {
   getProjectRootForConfig,
@@ -53,6 +53,51 @@ async function createProjectState(config, lock) {
   await writeConfig(config, process.cwd());
   await writeLock(lock, process.cwd());
   await fs.mkdir(config.modsDir, { recursive: true });
+}
+
+async function snapshotProjectFiles(directory = temporaryDirectory) {
+  const result = {};
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    const filePath = path.join(directory, entry.name);
+    const stat = await fs.stat(filePath);
+    result[entry.name] = {
+      mode: stat.mode,
+      mtimeMs: stat.mtimeMs,
+      contents: entry.isDirectory()
+        ? await snapshotProjectFiles(filePath)
+        : (await fs.readFile(filePath)).toString('base64')
+    };
+  }
+  return result;
+}
+
+function upgradeVersion(projectId, overrides = {}) {
+  return {
+    id: `${projectId}-new`,
+    project_id: projectId,
+    version_number: '2.0.0',
+    version_type: 'release',
+    game_versions: ['1.21.1'],
+    loaders: ['fabric'],
+    dependencies: [],
+    files: [{ filename: `${projectId}.jar`, url: `https://example.test/${projectId}.jar`, primary: true }],
+    ...overrides
+  };
+}
+
+async function createUpgradeProject(slugs = ['root'], allowBeta = false) {
+  const modsDir = path.join(temporaryDirectory, 'mods');
+  const installed = Object.fromEntries(slugs.map(slug => [slug, {
+    title: slug, slug, version: '1.0.0', versionId: `${slug}-old`,
+    filename: `${slug}-old.jar`, isDependency: false, dependencies: []
+  }]));
+  await createProjectState({
+    minecraftVersion: '1.20.1', loader: 'fabric', modsDir, allowBeta,
+    mods: Object.fromEntries(slugs.map(slug => [slug, 'latest']))
+  }, { minecraftVersion: '1.20.1', loader: 'fabric', allowBeta, installed });
+  for (const mod of Object.values(installed)) {
+    await fs.writeFile(path.join(modsDir, mod.filename), `previous ${mod.slug} jar`);
+  }
 }
 
 test.beforeEach(async () => {
@@ -197,6 +242,217 @@ test('upgrade changes the Minecraft version, loader, and complete mod plan toget
   assert.equal(request[2].lock.minecraftVersion, '1.21.1');
   assert.equal(request[2].lock.loader, 'neoforge');
   assert.equal(request[2].removeAllPrevious, true);
+});
+
+test('upgrade --check resolves all mods and required dependencies without downloading or writing', async () => {
+  await createUpgradeProject();
+  const before = await snapshotProjectFiles();
+  const requests = [];
+  const versions = {
+    root: upgradeVersion('root', {
+      loaders: ['neoforge'],
+      dependencies: [{ project_id: 'dependency', dependency_type: 'required' }]
+    }),
+    dependency: upgradeVersion('dependency', { loaders: ['neoforge'] })
+  };
+  const services = {
+    getProject: async id => ({ id, slug: id, title: id }),
+    getProjectVersions: async (id, version, loader) => {
+      requests.push(id);
+      assert.equal(version, '1.21.1');
+      assert.equal(loader, 'neoforge');
+      return [versions[id]];
+    },
+    getVersion: async () => assert.fail('No pinned dependency expected')
+  };
+  const result = await upgradeCommand('1.21.1', { check: true, loader: 'neoforge' },
+    async () => assert.fail('Check must not invoke the installer'), services);
+
+  assert.equal(result.compatible, true);
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.plan.items.size, 2);
+  assert.equal(result.plan.items.get('dependency').isDependency, true);
+  assert.deepEqual(requests, ['root', 'dependency']);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('upgrade --check reports every blocked direct mod, missing dependencies, and API failures', async () => {
+  await createUpgradeProject(['missing-one', 'missing-two', 'needs-dependency', 'api-error', 'healthy']);
+  const before = await snapshotProjectFiles();
+  const services = {
+    getProject: async id => ({ id, slug: id, title: id }),
+    getProjectVersions: async id => {
+      if (id === 'api-error') throw new Error('Modrinth API error (503): unavailable');
+      if (id === 'needs-dependency') return [upgradeVersion(id, {
+        dependencies: [{ project_id: 'missing-dependency', dependency_type: 'required' }]
+      })];
+      return id === 'healthy' ? [upgradeVersion(id)] : [];
+    }
+  };
+  const result = await upgradeCommand('1.21.1', { check: true },
+    async () => assert.fail('Check must not invoke the installer'), services);
+  assert.equal(result.compatible, false);
+  assert.deepEqual(result.failures.map(failure => failure.slug), [
+    'missing-one', 'missing-two', 'needs-dependency', 'api-error'
+  ]);
+  assert.match(result.failures[2].message, /missing-dependency/);
+  assert.match(result.failures[3].message, /503/);
+  assert.equal(result.plan.items.has('healthy'), true);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('upgrade checks the shared dependency graph even when another mod is already blocked', async () => {
+  const versions = {
+    first: upgradeVersion('first', {
+      dependencies: [{ project_id: 'shared', version_id: 'shared-one', dependency_type: 'required' }]
+    }),
+    second: upgradeVersion('second', {
+      dependencies: [{ project_id: 'shared', version_id: 'shared-two', dependency_type: 'required' }]
+    }),
+    'shared-one': upgradeVersion('shared', { id: 'shared-one', version_number: '1.0.0' }),
+    'shared-two': upgradeVersion('shared', { id: 'shared-two' })
+  };
+  const pinnedRequests = [];
+  const result = await checkInstallPlan(['blocked', 'first', 'second'], {
+    minecraftVersion: '1.21.1', loader: 'fabric'
+  }, {}, {
+    getProject: async id => ({ id, slug: id, title: id }),
+    getProjectVersions: async id => id === 'blocked' ? [] : [versions[id]],
+    getVersion: async id => { pinnedRequests.push(id); return versions[id]; }
+  });
+  assert.equal(result.compatible, false);
+  assert.equal(result.plan, null);
+  assert.equal(result.failures[0].slug, 'blocked');
+  assert.equal(result.failures[1].slug, null);
+  assert.match(result.failures[1].message, /Dependency version conflict for shared/);
+  assert.deepEqual(pinnedRequests, ['shared-one', 'shared-two']);
+});
+
+test('upgrade check accepts a full plan whose pinned dependencies cannot resolve in isolation', async () => {
+  const versions = {
+    'pins-shared': upgradeVersion('pins-shared', {
+      dependencies: [{ project_id: 'shared', version_id: 'shared-one', dependency_type: 'required' }]
+    }),
+    'uses-shared': upgradeVersion('uses-shared', {
+      dependencies: [
+        { project_id: 'shared', dependency_type: 'required' },
+        { project_id: 'pins-shared', dependency_type: 'required' }
+      ]
+    }),
+    shared: upgradeVersion('shared', { id: 'shared-two' }),
+    'shared-one': upgradeVersion('shared', { id: 'shared-one', version_number: '1.0.0' })
+  };
+  const config = { minecraftVersion: '1.21.1', loader: 'fabric' };
+  const services = {
+    getProject: async id => ({ id, slug: id, title: id }),
+    getProjectVersions: async id => [versions[id]],
+    getVersion: async id => versions[id]
+  };
+  await assert.rejects(resolveInstallPlan(['uses-shared'], config, {}, services), /Dependency version conflict/);
+  const result = await checkInstallPlan(['pins-shared', 'uses-shared'], config, {}, services);
+  assert.equal(result.compatible, true);
+  assert.equal(result.plan.items.get('shared').version.id, 'shared-one');
+});
+
+test('upgrade --check applies both explicit and stored beta policy without changing it', async () => {
+  await createUpgradeProject();
+  for (const [allowBeta, beta, compatible] of [[false, false, false], [false, true, true], [true, false, true]]) {
+    const config = await readConfig();
+    config.allowBeta = allowBeta;
+    await writeConfig(config);
+    const before = await snapshotProjectFiles();
+    const result = await upgradeCommand('1.21.1', { check: true, beta },
+      async () => assert.fail('Check must not invoke the installer'), {
+        getProject: async id => ({ id, slug: id, title: id }),
+        getProjectVersions: async id => [upgradeVersion(id, { version_type: 'beta' })]
+      });
+    assert.equal(result.compatible, compatible);
+    assert.deepEqual(await snapshotProjectFiles(), before);
+  }
+});
+
+test('upgrade --check validates mods even when Minecraft and loader are unchanged', async () => {
+  await createUpgradeProject();
+  let checked = false;
+  const result = await upgradeCommand('1.20.1', { check: true },
+    async () => assert.fail('Check must not invoke the installer'), {
+      getProject: async id => ({ id, slug: id, title: id }),
+      getProjectVersions: async (_id, version) => {
+        checked = true;
+        assert.equal(version, '1.20.1');
+        return [];
+      }
+    });
+  assert.equal(checked, true);
+  assert.equal(result.compatible, false);
+});
+
+test('upgrade check rejects missing, unsafe, and conflicting target JAR metadata', async () => {
+  const services = files => ({
+    getProject: async id => ({ id, slug: id, title: id }),
+    getProjectVersions: async id => [upgradeVersion(id, { files: files[id] })]
+  });
+  const config = { minecraftVersion: '1.21.1', loader: 'fabric' };
+  const missing = await checkInstallPlan(['root'], config, {}, services({ root: [] }));
+  assert.equal(missing.compatible, false);
+  assert.match(missing.failures[0].message, /No downloadable file/);
+  const unsafe = await checkInstallPlan(['root'], config, {}, services({ root: [{ filename: '../outside.jar' }] }));
+  assert.equal(unsafe.compatible, false);
+  assert.match(unsafe.failures[0].message, /Unsafe filename/);
+  const collision = await checkInstallPlan(['first', 'second'], config, {}, services({
+    first: [{ filename: 'shared.jar' }], second: [{ filename: 'shared.jar' }]
+  }));
+  assert.equal(collision.compatible, false);
+  assert.match(collision.failures[0].message, /same file: shared.jar/);
+});
+
+test('upgrade --check accepts an empty mod profile without creating directories or calling the API', async () => {
+  await createUpgradeProject([]);
+  const before = await snapshotProjectFiles();
+  const result = await upgradeCommand('1.21.1', { check: true },
+    async () => assert.fail('Check must not invoke the installer'), {
+      getProject: async () => assert.fail('Empty profile must not call the API'),
+      getProjectVersions: async () => assert.fail('Empty profile must not call the API')
+    });
+  assert.equal(result.compatible, true);
+  assert.equal(result.plan.items.size, 0);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+});
+
+test('upgrade --check CLI returns the compatibility status, handles flags, and leaves files unchanged', async () => {
+  await createUpgradeProject();
+  const preloadPath = path.join(temporaryDirectory, 'modrinth-fixture.cjs');
+  const version = upgradeVersion('root', { version_type: 'beta', loaders: ['neoforge'] });
+  await fs.writeFile(preloadPath, `
+    globalThis.fetch = async input => {
+      const url = new URL(input);
+      if (url.origin !== 'https://api.modrinth.com') throw new Error('Unexpected download: ' + input);
+      let value;
+      if (url.pathname === '/v2/project/root') {
+        value = { id: 'root', slug: 'root', title: 'Root' };
+      } else if (url.pathname === '/v2/project/root/version') {
+        if (url.searchParams.get('game_versions') !== JSON.stringify(['1.21.1']) ||
+            url.searchParams.get('loaders') !== JSON.stringify(['neoforge'])) throw new Error('Wrong target filters');
+        value = [${JSON.stringify(version)}];
+      } else throw new Error('Unexpected API request: ' + input);
+      return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+    };
+  `);
+  const before = await snapshotProjectFiles();
+  const run = extra => spawnSync(process.execPath, [
+    '--require', preloadPath, cliPath, 'upgrade', '1.21.1', '--check', '--loader', 'neoforge', ...extra
+  ], { encoding: 'utf8', env: process.env });
+  const compatible = run(['--beta']);
+  assert.equal(compatible.status, 0, compatible.stderr + compatible.stdout);
+  assert.match(compatible.stdout, /Compatible mod plan found/);
+  assert.match(compatible.stdout, /Root: 1\.0\.0 -> 2\.0\.0/);
+  const blocked = run([]);
+  assert.equal(blocked.status, 1, blocked.stderr + blocked.stdout);
+  assert.match(blocked.stdout, /root: No release version is available/);
+  assert.deepEqual(await snapshotProjectFiles(), before);
+  const help = spawnSync(process.execPath, [cliPath, 'upgrade', '--help'], { encoding: 'utf8', env: process.env });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--check/);
 });
 
 test('update skips an incompatible mod and updates the remaining mods', async () => {

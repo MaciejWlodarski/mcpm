@@ -114,8 +114,12 @@ program
   .command('upgrade <version>')
   .option('-b, --beta', 'Allow beta releases for the new game version')
   .option('--loader <loader>', 'Change the mod loader while upgrading')
+  .option('--check', 'Check all mod versions and dependencies without changing the profile')
   .description('Upgrade the Minecraft version, loader, and complete mod set')
-  .action((version, options) => upgradeCommand(version, options));
+  .action(async (version, options) => {
+    const result = await upgradeCommand(version, options);
+    if (options.check && result?.compatible === false) process.exitCode = 1;
+  });
 
 const featureLoadResult = await loadInstalledFeatures(program);
 for (const failure of featureLoadResult.failures) {
