@@ -13,6 +13,7 @@ import {
 } from './config.js';
 import { resolveProjectRoot } from './projects.js';
 import { assertVersionCompatible, selectCompatibleVersion } from './versioning.js';
+import { filenameKey } from './mod-files.js';
 
 function clone(value) {
   return structuredClone(value);
@@ -34,121 +35,167 @@ function validateFilename(filename) {
   }
 }
 
-export async function resolveInstallPlan(rootSlugs, config, options = {}, services = {}) {
-  const api = {
+function cachedApi(services = {}) {
+  const api = {};
+  for (const [name, implementation] of Object.entries({
     getProject: services.getProject || getProject,
     getProjectVersions: services.getProjectVersions || getProjectVersions,
     getVersion: services.getVersion || getVersion
-  };
-  const allowBeta = options.beta === true || config.allowBeta === true;
-  const items = new Map();
-  const resolving = new Set();
-  const versionToProject = new Map();
-  const rootProjectIds = new Set();
-
-  async function resolveProject(
-    idOrSlug,
-    { direct = false, exactVersion = null, retained = false } = {}
-  ) {
-    const project = await api.getProject(exactVersion?.project_id || idOrSlug);
-    const projectId = project.id;
-
-    if (exactVersion && exactVersion.project_id !== projectId) {
-      throw new Error(`Version ${exactVersion.id} does not belong to project ${project.title}`);
-    }
-
-    const existing = items.get(projectId);
-    if (existing) {
-      if (exactVersion && existing.version.id !== exactVersion.id) {
-        throw new Error(
-          `Dependency version conflict for ${project.title}: ${existing.version.version_number} and ${exactVersion.version_number}`
-        );
-      }
-      if (direct) {
-        existing.isDependency = false;
-        rootProjectIds.add(projectId);
-      }
-      return existing;
-    }
-
-    let version;
-    if (exactVersion) {
-      version = assertVersionCompatible(
-        exactVersion,
-        config.minecraftVersion,
-        config.loader,
-        allowBeta || retained
-      );
-    } else {
-      const versions = await api.getProjectVersions(
-        projectId,
-        config.minecraftVersion,
-        config.loader
-      );
-      if (versions.length === 0) {
-        throw new Error(
-          `No compatible version found for ${project.title} ` +
-          `(Minecraft ${config.minecraftVersion}, loader ${config.loader})`
-        );
-      }
-      version = selectCompatibleVersion(
-        versions,
-        config.minecraftVersion,
-        config.loader,
-        allowBeta
-      );
-    }
-
-    const item = {
-      project,
-      version,
-      dependencies: [],
-      isDependency: !direct
+  })) {
+    const requests = new Map();
+    api[name] = (...args) => {
+      const key = JSON.stringify(args);
+      if (!requests.has(key)) requests.set(key, Promise.resolve().then(() => implementation(...args)));
+      return requests.get(key);
     };
-    items.set(projectId, item);
-    versionToProject.set(version.id, projectId);
-    if (direct) rootProjectIds.add(projectId);
-
-    if (resolving.has(projectId)) return item;
-    resolving.add(projectId);
-
-    try {
-      const requiredDependencies = (version.dependencies || [])
-        .filter(dependency => dependency.dependency_type === 'required');
-
-      for (const dependency of requiredDependencies) {
-        let dependencyVersion = null;
-        let dependencyProjectId = dependency.project_id;
-
-        if (dependency.version_id) {
-          dependencyVersion = await api.getVersion(dependency.version_id);
-          dependencyProjectId = dependencyVersion.project_id;
-          versionToProject.set(dependencyVersion.id, dependencyProjectId);
-        }
-
-        if (!dependencyProjectId) {
-          throw new Error(`Dependency of ${project.title} has neither a project_id nor a valid version_id`);
-        }
-
-        const dependencyItem = await resolveProject(dependencyProjectId, {
-          exactVersion: dependencyVersion
-        });
-        item.dependencies.push(dependencyItem.project.id);
-      }
-
-      item.dependencies = [...new Set(item.dependencies)];
-      return item;
-    } finally {
-      resolving.delete(projectId);
-    }
   }
+  return api;
+}
 
+export async function resolveInstallPlan(rootSlugs, config, options = {}, services = {}) {
+  const api = cachedApi(services);
+  const allowBeta = options.beta === true || config.allowBeta === true;
+  const rootProjectIds = new Set();
+  const roots = new Map();
   for (const slug of [...new Set(rootSlugs)]) {
+    const project = await api.getProject(slug);
     const pinnedVersionId = options.pinnedVersions?.[slug];
     const exactVersion = pinnedVersionId ? await api.getVersion(pinnedVersionId) : null;
-    await resolveProject(slug, { direct: true, exactVersion, retained: Boolean(pinnedVersionId) });
+    if (exactVersion && exactVersion.project_id !== project.id) {
+      throw new Error(`Version ${exactVersion.id} does not belong to project ${project.title}`);
+    }
+    const previous = roots.get(project.id);
+    if (previous?.exactVersion && exactVersion && previous.exactVersion.id !== exactVersion.id) {
+      throw versionConflict(project, previous.exactVersion, exactVersion);
+    }
+    roots.set(project.id, { project, exactVersion: exactVersion || previous?.exactVersion || null });
+    rootProjectIds.add(project.id);
   }
 
+  function versionConflict(project, selected, required) {
+    const error = new Error(
+      `Dependency version conflict for ${project.title}: ${selected.version_number} and ${required.version_number}`
+    );
+    error.projectId = project.id;
+    error.requiredVersion = required;
+    return error;
+  }
+
+  // Rebuild constraints from reachable, selected versions on every search step.
+  // Replacing a dependency version therefore also drops its obsolete dependencies.
+  async function requirementsFor(selected) {
+    const required = new Map([...roots].sort(([left], [right]) => left.localeCompare(right)));
+    const dependencies = new Map();
+    const queue = [...required.keys()];
+    for (let index = 0; index < queue.length; index += 1) {
+      const projectId = queue[index];
+      const version = selected.get(projectId);
+      if (!version) continue;
+      const targets = new Set();
+      for (const dependency of version.dependencies || []) {
+        if (dependency.dependency_type !== 'required') continue;
+        const exactVersion = dependency.version_id ? await api.getVersion(dependency.version_id) : null;
+        const dependencyId = exactVersion?.project_id || dependency.project_id;
+        if (!dependencyId) {
+          throw new Error(`Dependency of ${required.get(projectId).project.title} has neither a project_id nor a valid version_id`);
+        }
+        const project = await api.getProject(dependencyId);
+        targets.add(project.id);
+        const existing = required.get(project.id);
+        if (existing?.exactVersion && exactVersion && existing.exactVersion.id !== exactVersion.id) {
+          throw versionConflict(project, existing.exactVersion, exactVersion);
+        }
+        if (!existing) queue.push(project.id);
+        required.set(project.id, {
+          project,
+          exactVersion: exactVersion || existing?.exactVersion || null
+        });
+      }
+      dependencies.set(projectId, [...targets]);
+    }
+
+    for (const [projectId, requirement] of required) {
+      const version = selected.get(projectId);
+      if (!version) continue;
+      if (requirement.exactVersion && version.id !== requirement.exactVersion.id) {
+        throw versionConflict(requirement.project, version, requirement.exactVersion);
+      }
+    }
+    return { required, dependencies };
+  }
+
+  async function assertNoIncompatibleMods(selected, required) {
+    for (const [projectId, requirement] of required) {
+      const version = selected.get(projectId);
+      for (const dependency of version.dependencies || []) {
+        if (dependency.dependency_type !== 'incompatible') continue;
+        const blockedVersion = dependency.version_id ? await api.getVersion(dependency.version_id) : null;
+        const blockedId = blockedVersion?.project_id || dependency.project_id;
+        const blocked = required.has(blockedId) ? selected.get(blockedId) : null;
+        if (blocked && (!blockedVersion || blocked.id === blockedVersion.id)) {
+          throw new Error(
+            `Incompatible mods: ${requirement.project.title} ${version.version_number} and ` +
+            `${required.get(blockedId).project.title} ${blocked.version_number}`
+          );
+        }
+      }
+    }
+  }
+
+  async function search(selected) {
+    const graph = await requirementsFor(selected);
+    const pending = [...graph.required.keys()].filter(id => !selected.has(id)).sort((left, right) =>
+      Number(rootProjectIds.has(right)) - Number(rootProjectIds.has(left)) || left.localeCompare(right)
+    );
+    if (pending.length === 0) {
+      await assertNoIncompatibleMods(selected, graph.required);
+      return { selected, ...graph };
+    }
+    const projectId = pending[0];
+    const { project, exactVersion } = graph.required.get(projectId);
+    let candidate;
+    if (exactVersion) {
+      candidate = assertVersionCompatible(exactVersion, config.minecraftVersion, config.loader,
+        allowBeta || Boolean(roots.get(projectId)?.exactVersion));
+    } else {
+      const versions = await api.getProjectVersions(projectId, config.minecraftVersion, config.loader);
+      if (versions.length === 0) {
+        throw new Error(`No compatible version found for ${project.title} ` +
+          `(Minecraft ${config.minecraftVersion}, loader ${config.loader})`);
+      }
+      candidate = selectCompatibleVersion(versions, config.minecraftVersion, config.loader, allowBeta);
+    }
+    const candidates = [candidate];
+    const tried = new Set();
+    let firstError;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const version = candidates[index];
+      if (tried.has(version.id)) continue;
+      tried.add(version.id);
+      try {
+        assertVersionCompatible(version, config.minecraftVersion, config.loader,
+          allowBeta || Boolean(roots.get(projectId)?.exactVersion));
+        return await search(new Map([...selected, [projectId, version]]));
+      } catch (error) {
+        firstError ||= error;
+        // A constraint discovered later can replace an unconstrained latest choice.
+        if (!exactVersion && error.projectId === projectId && error.requiredVersion) {
+          candidates.push(error.requiredVersion);
+        }
+      }
+    }
+    throw firstError;
+  }
+
+  const graph = await search(new Map());
+  const items = new Map();
+  const versionToProject = new Map();
+  for (const [projectId, { project }] of graph.required) {
+    const version = graph.selected.get(projectId);
+    items.set(projectId, { project, version, dependencies: graph.dependencies.get(projectId) || [],
+      isDependency: !rootProjectIds.has(projectId) });
+    versionToProject.set(version.id, projectId);
+  }
   return { items, rootProjectIds, versionToProject, allowBeta };
 }
 
@@ -161,32 +208,19 @@ function getPlanFiles(plan) {
       throw new Error(`No downloadable file found for ${item.project.title} ${item.version.version_number}`);
     }
     validateFilename(file.filename);
-    const owner = targetOwners.get(file.filename);
+    const key = filenameKey(file.filename);
+    const owner = targetOwners.get(key);
     if (owner && owner !== projectId) {
       throw new Error(`Two mods are trying to install the same file: ${file.filename}`);
     }
-    targetOwners.set(file.filename, projectId);
+    targetOwners.set(key, projectId);
     files.set(projectId, file);
   }
   return files;
 }
 
 export async function checkInstallPlan(rootSlugs, config, options = {}, services = {}) {
-  const cachedServices = {};
-  for (const [name, implementation] of Object.entries({
-    getProject: services.getProject || getProject,
-    getProjectVersions: services.getProjectVersions || getProjectVersions,
-    getVersion: services.getVersion || getVersion
-  })) {
-    const requests = new Map();
-    cachedServices[name] = (...args) => {
-      const key = JSON.stringify(args);
-      if (!requests.has(key)) {
-        requests.set(key, Promise.resolve().then(() => implementation(...args)));
-      }
-      return requests.get(key);
-    };
-  }
+  const cachedServices = cachedApi(services);
 
   // The full plan is authoritative: another mod may pin a dependency to a
   // compatible version that an isolated check would not select on its own.
@@ -266,13 +300,15 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
   const filesToRemove = new Set();
   const managedFiles = new Set(
     Object.values(previousLock.installed || {}).map(mod => mod.filename).filter(Boolean)
+      .map(filename => filenameKey(filename))
   );
   const managedFileOwners = new Map();
   for (const [projectId, mod] of Object.entries(previousLock.installed || {})) {
     if (!mod.filename) continue;
-    const owners = managedFileOwners.get(mod.filename) || new Set();
+    const key = filenameKey(mod.filename);
+    const owners = managedFileOwners.get(key) || new Set();
     owners.add(projectId);
-    managedFileOwners.set(mod.filename, owners);
+    managedFileOwners.set(key, owners);
   }
   const planFiles = getPlanFiles(plan);
 
@@ -339,10 +375,11 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
     await fs.mkdir(stagingDir, { recursive: true });
 
     for (const download of downloads) {
-      if (await pathExists(download.targetPath) && !managedFiles.has(download.file.filename)) {
+      const key = filenameKey(download.file.filename);
+      if (await pathExists(download.targetPath) && !managedFiles.has(key)) {
         throw new Error(`File ${download.file.filename} already exists and is not managed by MCPM`);
       }
-      const otherOwners = [...(managedFileOwners.get(download.file.filename) || [])]
+      const otherOwners = [...(managedFileOwners.get(key) || [])]
         .filter(ownerId => ownerId !== download.projectId && nextLock.installed[ownerId]);
       if (otherOwners.length > 0) {
         throw new Error(`File ${download.file.filename} already belongs to another installed mod`);
@@ -388,11 +425,15 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
       cleanupWarning
     };
   } catch (error) {
+    let rollbackFailed = false;
     for (const targetPath of installedTargets.reverse()) {
       try {
         await fs.unlink(targetPath);
       } catch (cleanupError) {
-        if (cleanupError.code !== 'ENOENT') error.cleanupError ||= cleanupError;
+        if (cleanupError.code !== 'ENOENT') {
+          rollbackFailed = true;
+          error.cleanupError ||= cleanupError;
+        }
       }
     }
 
@@ -400,6 +441,7 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
       try {
         await fs.rename(backup.backupPath, backup.originalPath);
       } catch (cleanupError) {
+        rollbackFailed = true;
         error.cleanupError ||= cleanupError;
       }
     }
@@ -409,18 +451,35 @@ export async function applyInstallPlan(plan, config, lock, options = {}) {
         await writeConfig(persistedConfig, projectRoot);
         await writeLock(persistedLock, projectRoot);
       } catch (cleanupError) {
+        rollbackFailed = true;
         error.cleanupError ||= cleanupError;
       }
     }
 
-    try {
-      await fs.rm(stagingDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      error.cleanupError ||= cleanupError;
+    if (rollbackFailed) {
+      error.recoveryDirectory = stagingDir;
+      error.message += ` Recovery files were kept at ${stagingDir}.`;
+    } else {
+      try {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        error.cleanupError ||= cleanupError;
+      }
     }
 
     throw error;
   }
+}
+
+export async function installedVersionId(projectId, mod, config, services = {}) {
+  if (mod.versionId) return mod.versionId;
+  const versions = await (services.getProjectVersions || getProjectVersions)(
+    projectId, config.minecraftVersion, config.loader
+  );
+  const versionId = versions.find(version => version.version_number === mod.version &&
+    (version.files || []).some(file => file.filename === mod.filename))?.id;
+  if (!versionId) throw new Error(`Cannot verify the installed version of ${mod.title || mod.slug || projectId}.`);
+  return versionId;
 }
 
 export async function installProjects(rootSlugs, options = {}, overrides = {}) {
@@ -429,7 +488,27 @@ export async function installProjects(rootSlugs, options = {}, overrides = {}) {
     getProjectRootForConfig(config) ||
     await resolveProjectRoot();
   const lock = overrides.lock || await readLock(projectRoot);
-  const plan = await resolveInstallPlan(rootSlugs, config, options, overrides.services);
+  const api = cachedApi(overrides.services);
+  const roots = new Set(rootSlugs);
+  const pins = { ...options.pinnedVersions };
+  if (!overrides.removeAllPrevious) {
+    const requestedIds = new Set();
+    for (const slug of rootSlugs) requestedIds.add((await api.getProject(slug)).id);
+    for (const slug of Object.keys(config.mods || {})) roots.add(slug);
+    for (const [projectId, mod] of Object.entries(lock.installed || {})) {
+      if (mod.isDependency) continue;
+      const slug = mod.slug || projectId;
+      roots.add(slug);
+      if (requestedIds.has(projectId)) continue;
+      const versionId = await installedVersionId(projectId, mod, config, api);
+      pins[slug] = versionId;
+      // Configurations created with a project ID may also contain its canonical slug.
+      for (const root of roots) {
+        if ((await api.getProject(root)).id === projectId) pins[root] = versionId;
+      }
+    }
+  }
+  const plan = await resolveInstallPlan([...roots], config, { ...options, pinnedVersions: pins }, api);
 
   return applyInstallPlan(plan, config, lock, {
     previousLock: overrides.previousLock,

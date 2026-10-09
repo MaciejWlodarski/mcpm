@@ -12,17 +12,18 @@ import {
   readConfig,
   readLock
 } from '../config.js';
-import { applyInstallPlan, resolveInstallPlan } from '../installer.js';
+import { applyInstallPlan, installedVersionId, resolveInstallPlan } from '../installer.js';
 
 function installedBySlug(lock, slug) {
-  return Object.values(lock.installed || {}).find(mod => mod.slug === slug && !mod.isDependency);
+  return Object.entries(lock.installed || {})
+    .find(([id, mod]) => (mod.slug === slug || id === slug) && !mod.isDependency)?.[1];
 }
 
-function pinnedVersions(directMods, updating, lock) {
+function pinnedVersions(directMods, updating, installedVersions) {
   return Object.fromEntries(directMods.flatMap(slug => {
     if (updating.has(slug)) return [];
-    const installed = installedBySlug(lock, slug);
-    return installed?.versionId ? [[slug, installed.versionId]] : [];
+    const versionId = installedVersions.get(slug);
+    return versionId ? [[slug, versionId]] : [];
   }));
 }
 
@@ -157,46 +158,69 @@ export async function updateProjects(directMods, options = {}, services = {}) {
   );
   const individuallyCompatible = [];
   const retained = new Set();
+  const installedVersions = new Map();
+  const unverified = new Map();
   for (const [index, slug] of directMods.entries()) {
     console.log(pc.cyan(`\n[${index + 1}/${directMods.length}] Checking ${pc.bold(slug)}...`));
+    const installed = installedBySlug(lock, slug);
+    if (installed) {
+      try {
+        const versionId = await installedVersionId(slug, installed, config, apiServices);
+        installedVersions.set(slug, versionId);
+        await resolvePlan([slug], config, {
+          ...options, pinnedVersions: { [slug]: versionId }
+        }, apiServices);
+        retained.add(slug);
+      } catch (error) {
+        // A version already incompatible with this profile cannot constrain its updates.
+        if (error.code !== 'MCPM_VERSION_INCOMPATIBLE') unverified.set(slug, error.message);
+      }
+    }
     try {
       await resolvePlan([slug], config, options, apiServices);
       individuallyCompatible.push(slug);
     } catch (error) {
       summary.failures.push({ slug, message: error.message });
       console.error(pc.yellow(`Skipped ${slug}: ${error.message}`));
-      const installed = installedBySlug(lock, slug);
-      if (installed?.versionId) {
-        try {
-          await resolvePlan([slug], config, {
-            ...options,
-            pinnedVersions: { [slug]: installed.versionId }
-          }, apiServices);
-          retained.add(slug);
-        } catch {
-          // An incompatible installed version must not block updates of other mods.
-        }
+    }
+  }
+
+  let updating = new Set(individuallyCompatible);
+  let finalPlan = null;
+  if (updating.size === 0) return summary;
+  try {
+    // Coupled mods may only become compatible when upgraded together.
+    finalPlan = await resolvePlan(planRoots(directMods, updating, retained), config, {
+      ...options, pinnedVersions: pinnedVersions(directMods, updating, installedVersions)
+    }, apiServices);
+  } catch {
+    updating = new Set();
+    for (const slug of individuallyCompatible) {
+      const tentative = new Set([...updating, slug]);
+      try {
+        finalPlan = await resolvePlan(planRoots(directMods, tentative, retained), config, {
+          ...options, pinnedVersions: pinnedVersions(directMods, tentative, installedVersions)
+        }, apiServices);
+        updating.add(slug);
+      } catch (error) {
+        summary.failures.push({ slug, message: error.message });
+        console.error(pc.yellow(`Skipped ${slug}: ${error.message}`));
       }
     }
   }
 
-  const updating = new Set();
-  let finalPlan = null;
-  for (const slug of individuallyCompatible) {
-    const tentative = new Set([...updating, slug]);
-    try {
-      finalPlan = await resolvePlan(planRoots(directMods, tentative, retained), config, {
-        ...options,
-        pinnedVersions: pinnedVersions(directMods, tentative, lock)
-      }, apiServices);
-      updating.add(slug);
-    } catch (error) {
-      summary.failures.push({ slug, message: error.message });
-      console.error(pc.yellow(`Skipped ${slug}: ${error.message}`));
-    }
-  }
-
   if (updating.size === 0) return summary;
+  const unsafeRetained = [...unverified].filter(([slug]) => !updating.has(slug));
+  if (unsafeRetained.length > 0) {
+    for (const [slug, reason] of unsafeRetained) {
+      const message = `Cannot safely update while the installed version of ${slug} is unverified: ${reason}`;
+      const failure = summary.failures.find(item => item.slug === slug);
+      if (failure) failure.message += `; ${message}`;
+      else summary.failures.push({ slug, message });
+      console.error(pc.yellow(message));
+    }
+    return summary;
+  }
   const result = await applyPlan(finalPlan, config, lock, { projectRoot });
   summary.downloaded = result.downloaded;
   summary.removed = result.removed;

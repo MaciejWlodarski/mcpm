@@ -150,6 +150,16 @@ without stopping compatible updates. MCPM then resolves and applies one shared
 dependency graph, so updating one mod cannot silently break another mod's
 required dependencies.
 
+Installing a mod also resolves the shared graph while preserving the versions
+of existing direct mods. Partial updates keep compatible installed versions in
+that graph, including mods skipped because of a conflict. If the installed
+version of a skipped mod cannot be verified, MCPM leaves the profile unchanged.
+Declared Modrinth incompatibilities and conflicting exact dependency versions
+block the plan before any files are replaced.
+
+If an operation fails and restoring the previous files also fails, MCPM keeps
+the remaining backups in its staging directory and prints the recovery path.
+
 `mcpm upgrade <version>` performs a profile migration. MCPM resolves a complete
 compatible graph of managed mods for the new Minecraft version before replacing any files or
 saving the new configuration. `--loader <loader>` changes the loader in the same
@@ -161,7 +171,9 @@ JARs or changing any profile files. It prints the target mod versions or reports
 blocking direct mods and conflicts in the shared dependency plan. `--loader` and
 `--beta` also apply to the check. Exit status is `0` for a compatible plan and `1`
 when the plan is blocked or cannot be verified. Compatibility is based on
-Modrinth metadata; this check does not test game execution.
+Modrinth metadata; this check does not test game execution. Exact dependency
+constraints take precedence over an unconstrained latest version, regardless of
+the order of mods in the profile.
 
 Beta support is persistent per profile:
 

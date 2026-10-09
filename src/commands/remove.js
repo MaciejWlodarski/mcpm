@@ -167,10 +167,12 @@ export async function removeCommand(slugOrId) {
     }
     return { removed: removedMods.map(mod => mod.id), retainedAsDependency: null, cleanupWarning };
   } catch (error) {
+    let rollbackFailed = false;
     for (const backup of backups.reverse()) {
       try {
         await fs.rename(backup.backupPath, backup.originalPath);
       } catch (rollbackError) {
+        rollbackFailed = true;
         error.rollbackError ||= rollbackError;
       }
     }
@@ -180,14 +182,20 @@ export async function removeCommand(slugOrId) {
         await writeConfig(config, projectRoot);
         await writeLock(lock, projectRoot);
       } catch (rollbackError) {
+        rollbackFailed = true;
         error.rollbackError ||= rollbackError;
       }
     }
 
-    try {
-      await fs.rm(stagingDir, { recursive: true, force: true });
-    } catch (rollbackError) {
-      error.rollbackError ||= rollbackError;
+    if (rollbackFailed) {
+      error.recoveryDirectory = stagingDir;
+      error.message += ` Recovery files were kept at ${stagingDir}.`;
+    } else {
+      try {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+      } catch (rollbackError) {
+        error.rollbackError ||= rollbackError;
+      }
     }
     throw error;
   }

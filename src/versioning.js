@@ -2,22 +2,28 @@ export function getAllowedVersionTypes(allowBeta) {
   return allowBeta ? ['release', 'beta'] : ['release'];
 }
 
+function incompatibleVersion(message) {
+  const error = new Error(message);
+  error.code = 'MCPM_VERSION_INCOMPATIBLE';
+  return error;
+}
+
 export function assertVersionCompatible(version, minecraftVersion, loader, allowBeta) {
   const allowedTypes = getAllowedVersionTypes(allowBeta);
 
   if (!allowedTypes.includes(version.version_type)) {
-    throw new Error(
+    throw incompatibleVersion(
       `Version ${version.version_number} has unsupported type "${version.version_type}" ` +
       `(allowed: ${allowedTypes.join(', ')})`
     );
   }
 
   if (Array.isArray(version.game_versions) && !version.game_versions.includes(minecraftVersion)) {
-    throw new Error(`Version ${version.version_number} does not support Minecraft ${minecraftVersion}`);
+    throw incompatibleVersion(`Version ${version.version_number} does not support Minecraft ${minecraftVersion}`);
   }
 
   if (Array.isArray(version.loaders) && !version.loaders.includes(loader)) {
-    throw new Error(`Version ${version.version_number} does not support the ${loader} loader`);
+    throw incompatibleVersion(`Version ${version.version_number} does not support the ${loader} loader`);
   }
 
   return version;

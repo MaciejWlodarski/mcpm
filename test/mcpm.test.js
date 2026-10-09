@@ -475,7 +475,7 @@ test('upgrade checks the shared dependency graph even when another mod is alread
   assert.deepEqual(pinnedRequests, ['shared-one', 'shared-two']);
 });
 
-test('upgrade check accepts a full plan whose pinned dependencies cannot resolve in isolation', async () => {
+test('upgrade check resolves late dependency pins in isolation and in either root order', async () => {
   const versions = {
     'pins-shared': upgradeVersion('pins-shared', {
       dependencies: [{ project_id: 'shared', version_id: 'shared-one', dependency_type: 'required' }]
@@ -495,10 +495,13 @@ test('upgrade check accepts a full plan whose pinned dependencies cannot resolve
     getProjectVersions: async id => [versions[id]],
     getVersion: async id => versions[id]
   };
-  await assert.rejects(resolveInstallPlan(['uses-shared'], config, {}, services), /Dependency version conflict/);
-  const result = await checkInstallPlan(['pins-shared', 'uses-shared'], config, {}, services);
-  assert.equal(result.compatible, true);
-  assert.equal(result.plan.items.get('shared').version.id, 'shared-one');
+  const isolated = await resolveInstallPlan(['uses-shared'], config, {}, services);
+  assert.equal(isolated.items.get('shared').version.id, 'shared-one');
+  for (const roots of [['pins-shared', 'uses-shared'], ['uses-shared', 'pins-shared']]) {
+    const result = await checkInstallPlan(roots, config, {}, services);
+    assert.equal(result.compatible, true);
+    assert.equal(result.plan.items.get('shared').version.id, 'shared-one');
+  }
 });
 
 test('upgrade --check applies both explicit and stored beta policy without changing it', async () => {
@@ -734,7 +737,9 @@ test('batch update excludes a skipped mod whose installed version is incompatibl
   const resolvePlan = async (roots, _config, options) => {
     if (roots.includes('firmament')) {
       if (options.pinnedVersions?.firmament) {
-        throw new Error('Version firmament-old does not support Minecraft 26.1.2');
+        throw Object.assign(new Error('Version firmament-old does not support Minecraft 26.1.2'), {
+          code: 'MCPM_VERSION_INCOMPATIBLE'
+        });
       }
       throw new Error('No compatible version');
     }

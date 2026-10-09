@@ -1,16 +1,13 @@
 import fs from 'fs/promises';
 import { constants } from 'fs';
 import path from 'path';
-
-function filenameKey(filename) {
-  return ['darwin', 'win32'].includes(process.platform) ? filename.toLowerCase() : filename;
-}
+import { filenameKey } from './mod-files.js';
 
 function managedFilenames(lock) {
   return new Set(Object.values(lock.installed || {})
     .map(mod => mod.filename)
     .filter(Boolean)
-    .map(filenameKey));
+    .map(filename => filenameKey(filename)));
 }
 
 export async function findManualMods(modsDirectory, lock) {
