@@ -17,7 +17,10 @@ import {
   saveSession
 } from '../features/launcher/dist/secure-storage.js';
 
-function jsonResponse(value, status = 200) {
+import { toError } from '../features/launcher/dist/errors.js';
+import { keychainFixture, nextResponse, sessionFixture } from './fixtures.js';
+
+function jsonResponse(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' }
@@ -25,11 +28,11 @@ function jsonResponse(value, status = 200) {
 }
 
 test('device code flow uses personal accounts and Xbox Live scopes', async () => {
-  let request;
+  let request: { url: string; options?: RequestInit } | undefined;
   const deviceCode = await requestDeviceCode({
     clientId: 'client-id',
     fetchImpl: async (url, options) => {
-      request = { url, options };
+      request = { url: String(url), options };
       return jsonResponse({
         device_code: 'device-code',
         user_code: 'ABCD-EFGH',
@@ -40,9 +43,10 @@ test('device code flow uses personal accounts and Xbox Live scopes', async () =>
     }
   });
 
+  assert.ok(request);
   assert.match(request.url, /\/consumers\/oauth2\/v2\.0\/devicecode$/);
-  assert.equal(request.options.body.get('client_id'), 'client-id');
-  assert.equal(request.options.body.get('scope'), MICROSOFT_SCOPES);
+  assert.equal(new URLSearchParams(String(request.options?.body)).get('client_id'), 'client-id');
+  assert.equal(new URLSearchParams(String(request.options?.body)).get('scope'), MICROSOFT_SCOPES);
   assert.equal(deviceCode.user_code, 'ABCD-EFGH');
 });
 
@@ -55,14 +59,15 @@ test('polling waits for code approval and returns a Microsoft token', async () =
       expires_in: 3600
     })
   ];
-  const waits = [];
+  const waits: number[] = [];
   const token = await pollForMicrosoftToken({
     device_code: 'device-code',
+    user_code: 'ABCD-EFGH',
     expires_in: 900,
     interval: 1
   }, {
     clientId: 'client-id',
-    fetchImpl: async () => responses.shift(),
+    fetchImpl: async () => nextResponse(responses),
     sleep: async milliseconds => { waits.push(milliseconds); }
   });
 
@@ -71,7 +76,7 @@ test('polling waits for code approval and returns a Microsoft token', async () =
 });
 
 test('a Microsoft token is exchanged for a Minecraft session and profile', async () => {
-  const requests = [];
+  const requests: { url: string; options: RequestInit }[] = [];
   const responses = [
     jsonResponse({ Token: 'xbox-user-token' }),
     jsonResponse({
@@ -90,20 +95,20 @@ test('a Microsoft token is exchanged for a Minecraft session and profile', async
   }, {
     clientId: 'client-id',
     fetchImpl: async (url, options = {}) => {
-      requests.push({ url, options });
-      return responses.shift();
+      requests.push({ url: String(url), options });
+      return nextResponse(responses);
     }
   });
 
   assert.equal(requests.length, 5);
   assert.match(requests[0].url, /user\.auth\.xboxlive\.com/);
-  assert.equal(JSON.parse(requests[0].options.body).Properties.RpsTicket, 'd=microsoft-token');
-  assert.equal(JSON.parse(requests[1].options.body).RelyingParty, 'rp://api.minecraftservices.com/');
+  assert.equal(JSON.parse(String(requests[0].options.body)).Properties.RpsTicket, 'd=microsoft-token');
+  assert.equal(JSON.parse(String(requests[1].options.body)).RelyingParty, 'rp://api.minecraftservices.com/');
   assert.equal(
-    JSON.parse(requests[2].options.body).identityToken,
+    JSON.parse(String(requests[2].options.body)).identityToken,
     'XBL3.0 x=user-hash;xsts-token'
   );
-  assert.equal(requests[3].options.headers.authorization, 'Bearer minecraft-token');
+  assert.equal(new Headers(requests[3].options.headers).get('authorization'), 'Bearer minecraft-token');
   assert.equal(session.profile.name, 'Steve');
   assert.equal(session.microsoft.refreshToken, 'refresh-token');
   assert.equal(session.minecraft.accessToken, 'minecraft-token');
@@ -121,7 +126,7 @@ test('a missing Minecraft license stops sign-in before fetching the profile', as
     exchangeMicrosoftTokenForMinecraft({
       access_token: 'microsoft-token',
       refresh_token: 'refresh-token'
-    }, { fetchImpl: async () => responses.shift() }),
+    }, { fetchImpl: async () => nextResponse(responses) }),
     /does not have an active Minecraft: Java Edition license/
   );
 });
@@ -137,16 +142,16 @@ test('a rejected App ID displays Minecraft Services review instructions', async 
     exchangeMicrosoftTokenForMinecraft({
       access_token: 'microsoft-token',
       refresh_token: 'refresh-token'
-    }, { fetchImpl: async () => responses.shift() }),
+    }, { fetchImpl: async () => nextResponse(responses) }),
     /not yet been approved by Minecraft Services.*mce-reviewappid/
   );
 });
 
 test('session storage writes only an encrypted value', async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-auth-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const protect = async value => Buffer.from(value, 'utf8').toString('base64');
-  const unprotect = async value => Buffer.from(value, 'base64').toString('utf8');
+  const session = sessionFixture();
+  const protect = async (value: string) => Buffer.from(value, 'utf8').toString('base64');
+  const unprotect = async (value: string) => Buffer.from(value, 'base64').toString('utf8');
 
   try {
     await saveSession(stateDirectory, session, { protect });
@@ -164,7 +169,7 @@ test('Windows DPAPI encrypts the session for the current user', {
   skip: process.platform !== 'win32'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-dpapi-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const session = sessionFixture();
   try {
     await saveSession(stateDirectory, session);
     const stored = await fs.readFile(getCredentialPath(stateDirectory), 'utf8');
@@ -179,8 +184,8 @@ test('macOS session storage is restricted to the current user', {
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-macos-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const createKeychainEntry = () => ({
+  const session = sessionFixture();
+  const createKeychainEntry = () => keychainFixture({
     deleteCredential() { throw new Error('login keychain unavailable'); }
   });
   try {
@@ -201,10 +206,10 @@ test('macOS stores the launcher session in the native Keychain by default', {
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-keychain-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  let stored = null;
-  const createKeychainEntry = () => ({
-    setPassword(value) { stored = value; },
+  const session = sessionFixture();
+  let stored: string | null = null;
+  const createKeychainEntry = () => keychainFixture({
+    setPassword(value: string) { stored = value; },
     getPassword() { return stored; },
     deleteCredential() {
       const existed = stored !== null;
@@ -227,14 +232,14 @@ test('macOS Keychain failures recommend the explicit file fallback', {
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-keychain-'));
-  const createKeychainEntry = () => ({
+  const createKeychainEntry = () => keychainFixture({
     getPassword() { throw new Error('login keychain unavailable'); }
   });
   try {
     await assert.rejects(
       readSession(stateDirectory, { createKeychainEntry }),
-      error => error.code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
-        /--storage=file/.test(error.message)
+      error => toError(error).code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
+        /--storage=file/.test(toError(error).message)
     );
   } finally {
     await fs.rm(stateDirectory, { recursive: true, force: true });
@@ -246,8 +251,8 @@ test('macOS reads and removes a session from the previous file location', {
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-legacy-'));
   const legacyPath = path.join(stateDirectory, 'features', 'launcher-account.dpapi');
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const createKeychainEntry = () => ({
+  const session = sessionFixture();
+  const createKeychainEntry = () => keychainFixture({
     deleteCredential() { throw new Error('login keychain unavailable'); }
   });
   try {
@@ -268,7 +273,7 @@ test('macOS file storage remains usable without the native Keychain dependency',
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-no-binding-'));
   const modulePath = path.join(stateDirectory, 'secure-storage.mjs');
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
+  const session = sessionFixture();
   try {
     await fs.copyFile(new URL('../features/launcher/dist/secure-storage.js', import.meta.url), modulePath);
     await fs.copyFile(
@@ -276,11 +281,12 @@ test('macOS file storage remains usable without the native Keychain dependency',
       path.join(stateDirectory, 'errors.js')
     );
     await fs.writeFile(path.join(stateDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
-    const isolatedStorage = await import(pathToFileURL(modulePath).href);
+    const isolatedStorage: typeof import('../features/launcher/dist/secure-storage.js') =
+      await import(pathToFileURL(modulePath).href);
     await assert.rejects(
       isolatedStorage.readSession(stateDirectory),
-      error => error.code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
-        error.cause.code === 'ERR_MODULE_NOT_FOUND'
+      error => toError(error).code === 'MCPM_KEYCHAIN_UNAVAILABLE' &&
+        toError(toError(error).cause).code === 'ERR_MODULE_NOT_FOUND'
     );
     await isolatedStorage.saveSession(stateDirectory, session, { storage: 'file' });
     assert.deepEqual(await isolatedStorage.readSession(stateDirectory), session);
@@ -295,12 +301,12 @@ test('macOS file logout cannot resurrect an older session when Keychain cleanup 
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-logout-'));
-  const oldSession = { profile: { name: 'Old' }, secret: 'old-refresh-token' };
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const brokenKeychain = () => ({
+  const oldSession = sessionFixture({ profile: { name: 'Old' }, microsoft: { refreshToken: 'old-refresh-token' } });
+  const session = sessionFixture();
+  const brokenKeychain = () => keychainFixture({
     deleteCredential() { throw new Error('login keychain unavailable'); }
   });
-  const unlockedKeychain = () => ({
+  const unlockedKeychain = () => keychainFixture({
     getPassword() { return JSON.stringify(oldSession); }
   });
   try {
@@ -319,11 +325,11 @@ test('macOS backend switching removes the old session and remembers the choice f
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-switch-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const refreshed = { ...session, secret: 'new-refresh-token' };
-  let stored = null;
-  const createKeychainEntry = () => ({
-    setPassword(value) { stored = value; },
+  const session = sessionFixture();
+  const refreshed = sessionFixture({ microsoft: { refreshToken: 'new-refresh-token' } });
+  let stored: string | null = null;
+  const createKeychainEntry = () => keychainFixture({
+    setPassword(value: string) { stored = value; },
     getPassword() { return stored; },
     deleteCredential() {
       const existed = stored !== null;
@@ -345,7 +351,7 @@ test('macOS backend switching removes the old session and remembers the choice f
     assert.equal(await clearSession(stateDirectory, { createKeychainEntry }), true);
     assert.equal(await readSession(stateDirectory, { createKeychainEntry }), null);
     await saveSession(stateDirectory, session, { createKeychainEntry });
-    assert.deepEqual(JSON.parse(stored), session);
+    assert.deepEqual(JSON.parse(String(stored)), session);
   } finally {
     await fs.rm(stateDirectory, { recursive: true, force: true });
   }
@@ -355,15 +361,15 @@ test('a failed macOS Keychain save preserves the previous file session and prefe
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-save-failure-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const createKeychainEntry = () => ({
+  const session = sessionFixture();
+  const createKeychainEntry = () => keychainFixture({
     deleteCredential() { return false; },
     setPassword() { throw new Error('login keychain unavailable'); }
   });
   try {
     await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
     await assert.rejects(
-      saveSession(stateDirectory, { ...session, secret: 'new-token' }, {
+      saveSession(stateDirectory, sessionFixture({ microsoft: { refreshToken: 'new-token' } }), {
         storage: 'keychain', createKeychainEntry
       }),
       { code: 'MCPM_KEYCHAIN_UNAVAILABLE' }
@@ -378,8 +384,8 @@ test('an unreadable macOS storage preference requires an explicit backend to rec
   skip: process.platform !== 'darwin'
 }, async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-launcher-preference-'));
-  const session = { profile: { name: 'Alex' }, secret: 'refresh-token' };
-  const createKeychainEntry = () => ({ deleteCredential() { return false; } });
+  const session = sessionFixture();
+  const createKeychainEntry = () => keychainFixture({ deleteCredential() { return false; } });
   try {
     await saveSession(stateDirectory, session, { storage: 'file', createKeychainEntry });
     await fs.writeFile(path.join(stateDirectory, 'credentials', 'launcher-storage.json'), '{broken');

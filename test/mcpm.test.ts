@@ -3,17 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { spawnSync } from 'child_process';
+import { ChildProcess, spawnSync, type SpawnOptions, type spawn as nodeSpawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { Command } from 'commander';
-import { EventEmitter } from 'events';
 import { resolveInstallPlan, checkInstallPlan, applyInstallPlan } from '../dist/src/installer.js';
 import { selectCompatibleVersion } from '../dist/src/versioning.js';
 import {
   getProjectRootForConfig,
   getConfigPath,
   getLockPath,
-  readConfig,
+  requireConfig,
   readLock,
   resolveModsDir,
   writeConfig,
@@ -40,27 +39,44 @@ import {
   setActiveProject
 } from '../dist/src/projects.js';
 
+import type { ApiServices, InstallPlan, Lockfile, ModrinthFile, ModrinthProject, ModrinthVersion, ProjectConfig } from '../dist/src/types.js';
+import { configFixture, lockFixture, planFixture } from './fixtures.js';
+
+async function checkUpgrade(...args: Parameters<typeof upgradeCommand>) {
+  const result = await upgradeCommand(...args);
+  assert.ok(result && 'compatible' in result, 'Expected an upgrade compatibility check');
+  return result;
+}
+
+// These children only emit lifecycle events; no operating-system process is started.
+function spawnMock(implementation: (command: string, args?: readonly string[], options?: SpawnOptions) => ChildProcess): typeof nodeSpawn {
+  return implementation as typeof nodeSpawn;
+}
+
 const originalCwd = process.cwd();
 const cliPath = fileURLToPath(new URL('../dist/bin/mcpm.js', import.meta.url));
 const launcherFeaturePath = fileURLToPath(new URL('../features/launcher', import.meta.url));
-let temporaryDirectory;
-let originalFetch;
-let originalStateDirectory;
-let originalProjectOverride;
-let originalNpmCache;
+let temporaryDirectory: string;
+let originalFetch: typeof fetch;
+let originalStateDirectory: string | undefined;
+let originalProjectOverride: string | undefined;
+let originalNpmCache: string | undefined;
 
-function stripAnsi(value) {
+function stripAnsi(value: string) {
   return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
-async function createProjectState(config, lock) {
+async function createProjectState(config: ProjectConfig, lock: Lockfile) {
   await writeConfig(config, process.cwd());
   await writeLock(lock, process.cwd());
   await fs.mkdir(config.modsDir, { recursive: true });
 }
 
-async function snapshotProjectFiles(directory = temporaryDirectory) {
-  const result = {};
+interface FileSnapshot { mode: number; mtimeMs: number; contents: string | ProjectSnapshot }
+interface ProjectSnapshot { [name: string]: FileSnapshot }
+
+async function snapshotProjectFiles(directory = temporaryDirectory): Promise<ProjectSnapshot> {
+  const result: ProjectSnapshot = {};
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     const filePath = path.join(directory, entry.name);
     const stat = await fs.stat(filePath);
@@ -75,7 +91,7 @@ async function snapshotProjectFiles(directory = temporaryDirectory) {
   return result;
 }
 
-function upgradeVersion(projectId, overrides = {}) {
+function upgradeVersion(projectId: string, overrides: Partial<ModrinthVersion> = {}): ModrinthVersion {
   return {
     id: `${projectId}-new`,
     project_id: projectId,
@@ -129,7 +145,8 @@ test.afterEach(async () => {
 });
 
 test('does not select a beta version when beta support is disabled', () => {
-  const beta = {
+  const beta: ModrinthVersion = {
+    project_id: 'root',
     id: 'beta-version',
     version_number: '2.0.0-beta',
     version_type: 'beta',
@@ -227,6 +244,7 @@ test('add-file CLI copies a manual JAR, keeps its source, and leaves profile sta
   assert.equal(await fs.readFile(source, 'utf8'), 'manual jar');
   assert.equal(await fs.readFile(path.join(temporaryDirectory, 'mods', 'My Manual Mod.JAR'), 'utf8'), 'manual jar');
   const after = await snapshotProjectFiles();
+  assert.ok(typeof after.mods.contents !== 'string');
   delete after.mods.contents['My Manual Mod.JAR'];
   after.mods.mtimeMs = before.mods.mtimeMs;
   assert.deepEqual(after, before);
@@ -264,12 +282,12 @@ test('open-mods resolves the current or named profile without changing the activ
   }
   await registerProject(first, { name: 'first' });
   await registerProject(second, { name: 'second', activate: false });
-  const opened = [];
-  const services = { openDirectory: async directory => { opened.push(directory); } };
+  const opened: string[] = [];
+  const services = { openDirectory: async (directory: string) => { opened.push(directory); } };
   assert.equal(await openModsCommand('second', services), path.join(second, 'Custom Mods'));
   assert.equal(await openModsCommand(null, services), path.join(first, 'Custom Mods'));
   assert.deepEqual(opened, [path.join(second, 'Custom Mods'), path.join(first, 'Custom Mods')]);
-  assert.equal((await listProjects()).find(project => project.active).name, 'first');
+  assert.equal((await listProjects()).find(project => project.active)?.name, 'first');
   assert.equal((await fs.stat(opened[0])).isDirectory(), true);
   await assert.rejects(openModsCommand('second', {
     openDirectory: async () => { throw new Error('File manager unavailable'); }
@@ -278,27 +296,29 @@ test('open-mods resolves the current or named profile without changing the activ
 
 test('folder opening preserves argument boundaries and reports file-manager failures', async () => {
   const directory = path.join(temporaryDirectory, 'Mods with spaces & $characters');
-  const child = new EventEmitter();
-  let request;
-  const spawn = (executable, args, options) => {
-    request = { executable, args, options };
+  const child = new ChildProcess();
+  const requests: { executable: string; args?: readonly string[]; options?: SpawnOptions }[] = [];
+  const spawn = spawnMock((executable, args, options) => {
+    requests.push({ executable, args, options });
     queueMicrotask(() => child.emit('close', 0));
     return child;
-  };
+  });
   await openDirectory(directory, { platform: 'darwin', spawn });
+  const request = requests[0];
+  assert.ok(request);
   assert.equal(request.executable, 'open');
   assert.deepEqual(request.args, [directory]);
-  assert.equal(request.options.shell, false);
-  await assert.rejects(openDirectory(directory, { platform: 'linux', spawn: () => {
-    const failed = new EventEmitter();
+  assert.equal(request.options?.shell, false);
+  await assert.rejects(openDirectory(directory, { platform: 'linux', spawn: spawnMock(() => {
+    const failed = new ChildProcess();
     queueMicrotask(() => failed.emit('close', 1));
     return failed;
-  } }), /Could not open the folder/);
-  await assert.rejects(openDirectory(directory, { platform: 'darwin', spawn: () => {
-    const failed = new EventEmitter();
+  }) }), /Could not open the folder/);
+  await assert.rejects(openDirectory(directory, { platform: 'darwin', spawn: spawnMock(() => {
+    const failed = new ChildProcess();
     queueMicrotask(() => failed.emit('error', new Error('open not found')));
     return failed;
-  } }), /open not found/);
+  }) }), /open not found/);
   assert.throws(() => openDirectory(directory, { platform: 'freebsd' }), /not supported/);
 });
 
@@ -318,11 +338,11 @@ test('beta setting is persisted in the project configuration and lock file', asy
   });
 
   await configCommand({ beta: 'on' });
-  assert.equal((await readConfig()).allowBeta, true);
+  assert.equal((await requireConfig()).allowBeta, true);
   assert.equal((await readLock()).allowBeta, true);
 
   await configCommand({ beta: 'off' });
-  assert.equal((await readConfig()).allowBeta, false);
+  assert.equal((await requireConfig()).allowBeta, false);
   assert.equal((await readLock()).allowBeta, false);
   await assert.rejects(configCommand({ beta: 'maybe' }), /on, off/);
 
@@ -333,10 +353,10 @@ test('beta setting is persisted in the project configuration and lock file', asy
     resolution: '1600x900',
     gameDir: './game'
   });
-  const launchConfig = await readConfig();
-  assert.equal(launchConfig.launcher.javaPath, javaPath);
-  assert.equal(launchConfig.launcher.memory.max, '6G');
-  assert.deepEqual(launchConfig.launcher.resolution, { width: 1600, height: 900 });
+  const launchConfig = await requireConfig();
+  assert.equal(launchConfig.launcher?.javaPath, javaPath);
+  assert.equal(launchConfig.launcher?.memory?.max, '6G');
+  assert.deepEqual(launchConfig.launcher?.resolution, { width: 1600, height: 900 });
   assert.equal(launchConfig.gameDir, './game');
   await assert.rejects(configCommand({ memory: '256M' }), /cannot be lower/);
   await assert.rejects(configCommand({ gameDir: modsDir }), /cannot overlap recursively/);
@@ -347,7 +367,7 @@ test('relative Java configuration is stored relative to the profile, not a later
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
   }, { minecraftVersion: '1.21.1', loader: 'fabric', installed: {} });
   await configCommand({ java: './jdk' });
-  assert.equal((await readConfig()).launcher.javaPath, path.join(temporaryDirectory, 'jdk'));
+  assert.equal((await requireConfig()).launcher?.javaPath, path.join(temporaryDirectory, 'jdk'));
 });
 
 test('failed project initialization rolls back newly created profile files', async () => {
@@ -374,15 +394,19 @@ test('upgrade changes the Minecraft version, loader, and complete mod plan toget
     minecraftVersion: '1.20.1',
     loader: 'fabric',
     allowBeta: false,
-    installed: { sodium: { slug: 'sodium', filename: 'sodium.jar', isDependency: false } }
+    installed: { sodium: { title: 'Sodium', slug: 'sodium', version: '1.0.0', filename: 'sodium.jar', isDependency: false } }
   });
-  let request;
+  const requests: Parameters<typeof import('../dist/src/installer.js').installProjects>[] = [];
   const result = await upgradeCommand('1.21.1', { loader: 'neoforge' }, async (...args) => {
-    request = args;
-    return { downloaded: 1, removed: 1, cleanupWarning: null };
+    requests.push(args);
+    assert.ok(args[2]?.config && args[2]?.lock);
+    return { config: args[2].config, lock: args[2].lock, downloaded: 1, removed: 1, cleanupWarning: null };
   });
 
+  assert.ok(result && 'downloaded' in result);
   assert.equal(result.downloaded, 1);
+  const request = requests[0];
+  assert.ok(request?.[2]?.config && request[2].lock);
   assert.deepEqual(request[0], ['sodium']);
   assert.equal(request[2].config.minecraftVersion, '1.21.1');
   assert.equal(request[2].config.loader, 'neoforge');
@@ -394,15 +418,15 @@ test('upgrade changes the Minecraft version, loader, and complete mod plan toget
 test('upgrade --check resolves all mods and required dependencies without downloading or writing', async () => {
   await createUpgradeProject();
   const before = await snapshotProjectFiles();
-  const requests = [];
-  const versions = {
+  const requests: string[] = [];
+  const versions: Record<string, ModrinthVersion> = {
     root: upgradeVersion('root', {
       loaders: ['neoforge'],
       dependencies: [{ project_id: 'dependency', dependency_type: 'required' }]
     }),
     dependency: upgradeVersion('dependency', { loaders: ['neoforge'] })
   };
-  const services = {
+  const services: Partial<ApiServices> = {
     getProject: async id => ({ id, slug: id, title: id }),
     getProjectVersions: async (id, version, loader) => {
       requests.push(id);
@@ -412,13 +436,13 @@ test('upgrade --check resolves all mods and required dependencies without downlo
     },
     getVersion: async () => assert.fail('No pinned dependency expected')
   };
-  const result = await upgradeCommand('1.21.1', { check: true, loader: 'neoforge' },
+  const result = await checkUpgrade('1.21.1', { check: true, loader: 'neoforge' },
     async () => assert.fail('Check must not invoke the installer'), services);
 
-  assert.equal(result.compatible, true);
+  assert.ok(result.compatible);
   assert.deepEqual(result.failures, []);
   assert.equal(result.plan.items.size, 2);
-  assert.equal(result.plan.items.get('dependency').isDependency, true);
+  assert.equal(result.plan.items.get('dependency')?.isDependency, true);
   assert.deepEqual(requests, ['root', 'dependency']);
   assert.deepEqual(await snapshotProjectFiles(), before);
 });
@@ -426,7 +450,7 @@ test('upgrade --check resolves all mods and required dependencies without downlo
 test('upgrade --check reports every blocked direct mod, missing dependencies, and API failures', async () => {
   await createUpgradeProject(['missing-one', 'missing-two', 'needs-dependency', 'api-error', 'healthy']);
   const before = await snapshotProjectFiles();
-  const services = {
+  const services: Partial<ApiServices> = {
     getProject: async id => ({ id, slug: id, title: id }),
     getProjectVersions: async id => {
       if (id === 'api-error') throw new Error('Modrinth API error (503): unavailable');
@@ -436,7 +460,7 @@ test('upgrade --check reports every blocked direct mod, missing dependencies, an
       return id === 'healthy' ? [upgradeVersion(id)] : [];
     }
   };
-  const result = await upgradeCommand('1.21.1', { check: true },
+  const result = await checkUpgrade('1.21.1', { check: true },
     async () => assert.fail('Check must not invoke the installer'), services);
   assert.equal(result.compatible, false);
   assert.deepEqual(result.failures.map(failure => failure.slug), [
@@ -444,12 +468,13 @@ test('upgrade --check reports every blocked direct mod, missing dependencies, an
   ]);
   assert.match(result.failures[2].message, /missing-dependency/);
   assert.match(result.failures[3].message, /503/);
+  assert.ok(result.plan);
   assert.equal(result.plan.items.has('healthy'), true);
   assert.deepEqual(await snapshotProjectFiles(), before);
 });
 
 test('upgrade checks the shared dependency graph even when another mod is already blocked', async () => {
-  const versions = {
+  const versions: Record<string, ModrinthVersion> = {
     first: upgradeVersion('first', {
       dependencies: [{ project_id: 'shared', version_id: 'shared-one', dependency_type: 'required' }]
     }),
@@ -459,9 +484,9 @@ test('upgrade checks the shared dependency graph even when another mod is alread
     'shared-one': upgradeVersion('shared', { id: 'shared-one', version_number: '1.0.0' }),
     'shared-two': upgradeVersion('shared', { id: 'shared-two' })
   };
-  const pinnedRequests = [];
+  const pinnedRequests: string[] = [];
   const result = await checkInstallPlan(['blocked', 'first', 'second'], {
-    minecraftVersion: '1.21.1', loader: 'fabric'
+    minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods', mods: {}
   }, {}, {
     getProject: async id => ({ id, slug: id, title: id }),
     getProjectVersions: async id => id === 'blocked' ? [] : [versions[id]],
@@ -476,7 +501,7 @@ test('upgrade checks the shared dependency graph even when another mod is alread
 });
 
 test('upgrade check resolves late dependency pins in isolation and in either root order', async () => {
-  const versions = {
+  const versions: Record<string, ModrinthVersion> = {
     'pins-shared': upgradeVersion('pins-shared', {
       dependencies: [{ project_id: 'shared', version_id: 'shared-one', dependency_type: 'required' }]
     }),
@@ -489,29 +514,29 @@ test('upgrade check resolves late dependency pins in isolation and in either roo
     shared: upgradeVersion('shared', { id: 'shared-two' }),
     'shared-one': upgradeVersion('shared', { id: 'shared-one', version_number: '1.0.0' })
   };
-  const config = { minecraftVersion: '1.21.1', loader: 'fabric' };
-  const services = {
+  const config = configFixture({ minecraftVersion: '1.21.1', loader: 'fabric' });
+  const services: Partial<ApiServices> = {
     getProject: async id => ({ id, slug: id, title: id }),
     getProjectVersions: async id => [versions[id]],
     getVersion: async id => versions[id]
   };
   const isolated = await resolveInstallPlan(['uses-shared'], config, {}, services);
-  assert.equal(isolated.items.get('shared').version.id, 'shared-one');
+  assert.equal(isolated.items.get('shared')?.version.id, 'shared-one');
   for (const roots of [['pins-shared', 'uses-shared'], ['uses-shared', 'pins-shared']]) {
     const result = await checkInstallPlan(roots, config, {}, services);
-    assert.equal(result.compatible, true);
-    assert.equal(result.plan.items.get('shared').version.id, 'shared-one');
+    assert.ok(result.compatible);
+    assert.equal(result.plan.items.get('shared')?.version.id, 'shared-one');
   }
 });
 
 test('upgrade --check applies both explicit and stored beta policy without changing it', async () => {
   await createUpgradeProject();
   for (const [allowBeta, beta, compatible] of [[false, false, false], [false, true, true], [true, false, true]]) {
-    const config = await readConfig();
+    const config = await requireConfig();
     config.allowBeta = allowBeta;
     await writeConfig(config);
     const before = await snapshotProjectFiles();
-    const result = await upgradeCommand('1.21.1', { check: true, beta },
+    const result = await checkUpgrade('1.21.1', { check: true, beta },
       async () => assert.fail('Check must not invoke the installer'), {
         getProject: async id => ({ id, slug: id, title: id }),
         getProjectVersions: async id => [upgradeVersion(id, { version_type: 'beta' })]
@@ -524,7 +549,7 @@ test('upgrade --check applies both explicit and stored beta policy without chang
 test('upgrade --check validates mods even when Minecraft and loader are unchanged', async () => {
   await createUpgradeProject();
   let checked = false;
-  const result = await upgradeCommand('1.20.1', { check: true },
+  const result = await checkUpgrade('1.20.1', { check: true },
     async () => assert.fail('Check must not invoke the installer'), {
       getProject: async id => ({ id, slug: id, title: id }),
       getProjectVersions: async (_id, version) => {
@@ -538,19 +563,19 @@ test('upgrade --check validates mods even when Minecraft and loader are unchange
 });
 
 test('upgrade check rejects missing, unsafe, and conflicting target JAR metadata', async () => {
-  const services = files => ({
+  const services = (files: Record<string, ModrinthFile[]>): Partial<ApiServices> => ({
     getProject: async id => ({ id, slug: id, title: id }),
     getProjectVersions: async id => [upgradeVersion(id, { files: files[id] })]
   });
-  const config = { minecraftVersion: '1.21.1', loader: 'fabric' };
+  const config = configFixture({ minecraftVersion: '1.21.1', loader: 'fabric' });
   const missing = await checkInstallPlan(['root'], config, {}, services({ root: [] }));
   assert.equal(missing.compatible, false);
   assert.match(missing.failures[0].message, /No downloadable file/);
-  const unsafe = await checkInstallPlan(['root'], config, {}, services({ root: [{ filename: '../outside.jar' }] }));
+  const unsafe = await checkInstallPlan(['root'], config, {}, services({ root: [{ filename: '../outside.jar', url: 'https://example.test/outside.jar' }] }));
   assert.equal(unsafe.compatible, false);
   assert.match(unsafe.failures[0].message, /Unsafe filename/);
   const collision = await checkInstallPlan(['first', 'second'], config, {}, services({
-    first: [{ filename: 'shared.jar' }], second: [{ filename: 'shared.jar' }]
+    first: [{ filename: 'shared.jar', url: 'https://example.test/shared.jar' }], second: [{ filename: 'shared.jar', url: 'https://example.test/shared.jar' }]
   }));
   assert.equal(collision.compatible, false);
   assert.match(collision.failures[0].message, /same file: shared.jar/);
@@ -559,12 +584,12 @@ test('upgrade check rejects missing, unsafe, and conflicting target JAR metadata
 test('upgrade --check accepts an empty mod profile without creating directories or calling the API', async () => {
   await createUpgradeProject([]);
   const before = await snapshotProjectFiles();
-  const result = await upgradeCommand('1.21.1', { check: true },
+  const result = await checkUpgrade('1.21.1', { check: true },
     async () => assert.fail('Check must not invoke the installer'), {
       getProject: async () => assert.fail('Empty profile must not call the API'),
       getProjectVersions: async () => assert.fail('Empty profile must not call the API')
     });
-  assert.equal(result.compatible, true);
+  assert.ok(result.compatible);
   assert.equal(result.plan.items.size, 0);
   assert.deepEqual(await snapshotProjectFiles(), before);
 });
@@ -576,7 +601,7 @@ test('upgrade --check CLI returns the compatibility status, handles flags, and l
   const version = upgradeVersion('root', { version_type: 'beta', loaders: ['neoforge'] });
   await fs.writeFile(preloadPath, `
     globalThis.fetch = async input => {
-      const url = new URL(input);
+      const url = new URL(String(input));
       if (url.origin !== 'https://api.modrinth.com') throw new Error('Unexpected download: ' + input);
       let value;
       if (url.pathname === '/v2/project/root') {
@@ -590,7 +615,7 @@ test('upgrade --check CLI returns the compatibility status, handles flags, and l
     };
   `);
   const before = await snapshotProjectFiles();
-  const run = extra => spawnSync(process.execPath, [
+  const run = (extra: string[]) => spawnSync(process.execPath, [
     '--require', preloadPath, cliPath, 'upgrade', '1.21.1', '--check', '--loader', 'neoforge', ...extra
   ], { encoding: 'utf8', env: process.env });
   const compatible = run(['--beta']);
@@ -614,7 +639,7 @@ test('upgrade --check ignores manual JARs without asking the API about them or c
   const manualPath = path.join(temporaryDirectory, 'mods', 'manual.jar');
   await fs.writeFile(manualPath, 'manual jar');
   const before = await snapshotProjectFiles();
-  const result = await upgradeCommand('1.21.1', { check: true },
+  const result = await checkUpgrade('1.21.1', { check: true },
     async () => assert.fail('Check must not invoke the installer'), {
       getProject: async id => {
         assert.equal(id, 'root');
@@ -625,7 +650,7 @@ test('upgrade --check ignores manual JARs without asking the API about them or c
         return [upgradeVersion(id)];
       }
     });
-  assert.equal(result.compatible, true);
+  assert.ok(result.compatible);
   assert.deepEqual(result.failures, []);
   assert.deepEqual(result.manualMods, [{ filename: 'manual.jar', path: manualPath }]);
   assert.deepEqual(await snapshotProjectFiles(), before);
@@ -637,7 +662,7 @@ test('managed profile upgrades and removals preserve manual JARs', async () => {
   await fs.writeFile(manualPath, 'manual jar');
   const before = await fs.stat(manualPath);
   globalThis.fetch = async input => {
-    const url = new URL(input);
+    const url = new URL(String(input));
     if (url.origin === 'https://api.modrinth.com') {
       const value = url.pathname.endsWith('/version')
         ? [upgradeVersion('root')]
@@ -648,6 +673,7 @@ test('managed profile upgrades and removals preserve manual JARs', async () => {
     return new Response('new managed jar');
   };
   const result = await upgradeCommand('1.21.1');
+  assert.ok(result && 'config' in result);
   assert.equal(result.config.minecraftVersion, '1.21.1');
   assert.equal(await fs.readFile(manualPath, 'utf8'), 'manual jar');
   assert.equal((await fs.stat(manualPath)).mtimeMs, before.mtimeMs);
@@ -658,14 +684,14 @@ test('managed profile upgrades and removals preserve manual JARs', async () => {
 });
 
 test('update skips an incompatible mod and updates the remaining mods', async () => {
-  const calls = [];
-  const installer = async ([slug]) => {
+  const calls: string[] = [];
+  const installer: typeof import('../dist/src/installer.js').installProjects = async ([slug]) => {
     calls.push(slug);
     if (slug === 'firmament') {
       throw new Error('No compatible version');
     }
-    if (slug === 'sodium') return { downloaded: 1, removed: 1, cleanupWarning: null };
-    return { downloaded: 0, removed: 0, cleanupWarning: null };
+    if (slug === 'sodium') return { config: configFixture(), lock: lockFixture(), downloaded: 1, removed: 1, cleanupWarning: null };
+    return { config: configFixture(), lock: lockFixture(), downloaded: 0, removed: 0, cleanupWarning: null };
   };
 
   const summary = await updateProjects(['firmament', 'sodium', 'mod-menu'], {}, installer);
@@ -684,32 +710,33 @@ test('batch update pins skipped mods while resolving one dependency graph', asyn
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
     mods: { firmament: 'latest', sodium: 'latest' }
   };
-  const lock = { installed: {
+  const lock = lockFixture({ installed: {
     firmament: {
       slug: 'firmament', versionId: 'firmament-old', filename: 'firmament.jar', isDependency: false
     },
     sodium: {
       slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
     }
-  } };
-  const combinedOptions = [];
-  const resolvePlan = async (roots, _config, options) => {
+  } });
+  const combinedOptions: Record<string, string>[] = [];
+  const resolvePlan: typeof resolveInstallPlan = async (roots, _config, options = {}) => {
     if (roots.length === 1 && roots[0] === 'firmament' && !options.pinnedVersions?.firmament) {
       throw new Error('No compatible version');
     }
-    if (roots.length > 1) combinedOptions.push(options.pinnedVersions);
-    return { roots, allowBeta: false, items: new Map() };
+    if (roots.length > 1) combinedOptions.push(options.pinnedVersions || {});
+    return planFixture(roots);
   };
-  const applyPlan = async () => ({
+  const applyPlan: typeof applyInstallPlan = async (_plan, config) => ({
+    config,
     downloaded: 1,
     removed: 1,
     cleanupWarning: null,
-    lock: { installed: {
+    lock: lockFixture({ installed: {
       ...lock.installed,
       sodium: {
         slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
       }
-    } }
+    } })
   });
 
   const summary = await updateProjects(['firmament', 'sodium'], {}, {
@@ -725,16 +752,16 @@ test('batch update excludes a skipped mod whose installed version is incompatibl
     minecraftVersion: '26.1.2', loader: 'fabric', modsDir: './mods',
     mods: { firmament: 'latest', sodium: 'latest' }
   };
-  const lock = { installed: {
+  const lock = lockFixture({ installed: {
     firmament: {
       slug: 'firmament', versionId: 'firmament-old', filename: 'firmament.jar', isDependency: false
     },
     sodium: {
       slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
     }
-  } };
-  const combinedRoots = [];
-  const resolvePlan = async (roots, _config, options) => {
+  } });
+  const combinedRoots: string[][] = [];
+  const resolvePlan: typeof resolveInstallPlan = async (roots, _config, options = {}) => {
     if (roots.includes('firmament')) {
       if (options.pinnedVersions?.firmament) {
         throw Object.assign(new Error('Version firmament-old does not support Minecraft 26.1.2'), {
@@ -744,18 +771,19 @@ test('batch update excludes a skipped mod whose installed version is incompatibl
       throw new Error('No compatible version');
     }
     combinedRoots.push(roots);
-    return { roots, allowBeta: false, items: new Map() };
+    return planFixture(roots);
   };
-  const applyPlan = async () => ({
+  const applyPlan: typeof applyInstallPlan = async (_plan, config) => ({
+    config,
     downloaded: 1,
     removed: 1,
     cleanupWarning: null,
-    lock: { installed: {
+    lock: lockFixture({ installed: {
       ...lock.installed,
       sodium: {
         slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
       }
-    } }
+    } })
   });
 
   const summary = await updateProjects(['firmament', 'sodium'], {}, {
@@ -772,7 +800,7 @@ test('a mocked update resolver does not trigger real API prefetch requests', asy
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
     mods: { sodium: 'latest' }
   };
-  const lock = { installed: {} };
+  const lock = lockFixture({ installed: {} });
   let fetchCalls = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
@@ -785,12 +813,13 @@ test('a mocked update resolver does not trigger real API prefetch requests', asy
       config,
       lock,
       projectRoot: temporaryDirectory,
-      resolvePlan: async roots => ({ roots, allowBeta: false, items: new Map() }),
-      applyPlan: async () => ({
+      resolvePlan: async roots => planFixture(roots),
+      applyPlan: async (_plan, config) => ({
+        config,
         downloaded: 0,
         removed: 0,
         cleanupWarning: null,
-        lock: { installed: {} }
+        lock: lockFixture({ installed: {} })
       })
     });
   } finally {
@@ -805,26 +834,27 @@ test('batch update excludes skipped mods that cannot be pinned', async () => {
     minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
     mods: { firmament: 'latest', sodium: 'latest' }
   };
-  const lock = { installed: {
+  const lock = lockFixture({ installed: {
     sodium: {
       slug: 'sodium', versionId: 'sodium-old', filename: 'sodium-old.jar', isDependency: false
     }
-  } };
-  const combinedRoots = [];
-  const resolvePlan = async (roots) => {
+  } });
+  const combinedRoots: string[][] = [];
+  const resolvePlan: typeof resolveInstallPlan = async (roots) => {
     if (roots.includes('firmament')) throw new Error('No compatible version');
     if (roots.length > 1 || roots[0] === 'sodium') combinedRoots.push(roots);
-    return { roots, allowBeta: false, items: new Map() };
+    return planFixture(roots);
   };
-  const applyPlan = async () => ({
+  const applyPlan: typeof applyInstallPlan = async (_plan, config) => ({
+    config,
     downloaded: 1,
     removed: 1,
     cleanupWarning: null,
-    lock: { installed: {
+    lock: lockFixture({ installed: {
       sodium: {
         slug: 'sodium', versionId: 'sodium-new', filename: 'sodium-new.jar', isDependency: false
       }
-    } }
+    } })
   });
 
   const summary = await updateProjects(['firmament', 'sodium'], {}, {
@@ -836,7 +866,7 @@ test('batch update excludes skipped mods that cannot be pinned', async () => {
 });
 
 test('the optional launcher can be installed, loaded, and uninstalled', async () => {
-  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
+  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher')?.installed, false);
 
   const installed = await installFeature('launcher', { source: launcherFeaturePath });
   assert.equal(installed.name, 'launcher');
@@ -851,13 +881,14 @@ test('the optional launcher can be installed, loaded, and uninstalled', async ()
   assert.ok(program.commands.some(command => command.name() === 'profile'));
   assert.ok(program.commands.some(command => command.name() === 'launch'));
   const launcher = program.commands.find(command => command.name() === 'launcher');
+  assert.ok(launcher);
   assert.deepEqual(
     launcher.commands.map(command => command.name()),
     ['status', 'profiles', 'prepare', 'login', 'account', 'logout']
   );
 
   await uninstallFeature('launcher');
-  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher').installed, false);
+  assert.equal((await listFeatures()).find(feature => feature.name === 'launcher')?.installed, false);
 });
 
 test('the active project allows configuration reads from any directory', async () => {
@@ -876,9 +907,9 @@ test('the active project allows configuration reads from any directory', async (
   await registerProject(secondRoot, { name: 'second' });
   process.chdir(outside);
 
-  assert.equal((await readConfig()).minecraftVersion, '1.21.1');
+  assert.equal((await requireConfig()).minecraftVersion, '1.21.1');
   await setActiveProject('first');
-  const firstConfig = await readConfig();
+  const firstConfig = await requireConfig();
   assert.equal(firstConfig.minecraftVersion, '1.20.1');
   assert.equal(
     resolveModsDir(firstConfig, getProjectRootForConfig(firstConfig)),
@@ -930,7 +961,7 @@ test('a local project takes precedence over the globally active project', async 
   await registerProject(activeRoot, { name: 'active' });
   process.chdir(localSubdirectory);
 
-  const config = await readConfig();
+  const config = await requireConfig();
   assert.equal(config.minecraftVersion, '1.20.1');
   assert.equal(getProjectRootForConfig(config), localRoot);
 });
@@ -948,7 +979,7 @@ test('MCPM_PROJECT overrides the local and globally active projects', async () =
   process.chdir(localRoot);
   process.env.MCPM_PROJECT = overrideRoot;
 
-  const config = await readConfig();
+  const config = await requireConfig();
   assert.equal(config.minecraftVersion, '1.21.1');
   assert.equal(getProjectRootForConfig(config), overrideRoot);
 });
@@ -963,15 +994,15 @@ test('a project can be removed from the registry without deleting its files', as
   await forgetProject('registered');
 
   assert.deepEqual(await listProjects(), []);
-  assert.equal((await readConfig(projectRoot)).minecraftVersion, '1.21.1');
+  assert.equal((await requireConfig(projectRoot)).minecraftVersion, '1.21.1');
 });
 
 test('the resolver honors an exact version_id for a required dependency', async () => {
-  const projects = {
+  const projects: Record<string, ModrinthProject> = {
     root: { id: 'root', slug: 'root', title: 'Root' },
     dependency: { id: 'dependency', slug: 'dependency', title: 'Dependency' }
   };
-  const pinnedDependency = {
+  const pinnedDependency: ModrinthVersion = {
     id: 'dependency-pinned',
     project_id: 'dependency',
     version_number: '1.0.0',
@@ -982,7 +1013,7 @@ test('the resolver honors an exact version_id for a required dependency', async 
     files: [{ filename: 'dependency.jar', url: 'https://example.test/dependency.jar', primary: true }]
   };
   const latestDependency = { ...pinnedDependency, id: 'dependency-latest', version_number: '2.0.0' };
-  const rootVersion = {
+  const rootVersion: ModrinthVersion = {
     id: 'root-version',
     project_id: 'root',
     version_number: '1.0.0',
@@ -997,7 +1028,7 @@ test('the resolver honors an exact version_id for a required dependency', async 
     files: [{ filename: 'root.jar', url: 'https://example.test/root.jar', primary: true }]
   };
   let genericDependencyLookup = false;
-  const services = {
+  const services: Partial<ApiServices> = {
     getProject: async id => projects[id],
     getVersion: async id => {
       assert.equal(id, 'dependency-pinned');
@@ -1013,19 +1044,19 @@ test('the resolver honors an exact version_id for a required dependency', async 
   const plan = await resolveInstallPlan(['root'], {
     minecraftVersion: '1.21.1',
     loader: 'fabric',
-    allowBeta: false
+    allowBeta: false, modsDir: './mods', mods: {}
   }, {}, services);
 
-  assert.equal(plan.items.get('dependency').version.id, 'dependency-pinned');
+  assert.equal(plan.items.get('dependency')?.version.id, 'dependency-pinned');
   assert.equal(genericDependencyLookup, false);
 });
 
 test('the resolver stops installation when a required dependency is unavailable', async () => {
-  const projects = {
+  const projects: Record<string, ModrinthProject> = {
     root: { id: 'root', slug: 'root', title: 'Root' },
     missing: { id: 'missing', slug: 'missing', title: 'Missing' }
   };
-  const rootVersion = {
+  const rootVersion: ModrinthVersion = {
     id: 'root-version',
     project_id: 'root',
     version_number: '1.0.0',
@@ -1035,7 +1066,7 @@ test('the resolver stops installation when a required dependency is unavailable'
     dependencies: [{ project_id: 'missing', dependency_type: 'required' }],
     files: [{ filename: 'root.jar', url: 'https://example.test/root.jar', primary: true }]
   };
-  const services = {
+  const services: Partial<ApiServices> = {
     getProject: async id => projects[id],
     getVersion: async () => assert.fail('getVersion should not be called'),
     getProjectVersions: async id => id === 'root' ? [rootVersion] : []
@@ -1045,7 +1076,7 @@ test('the resolver stops installation when a required dependency is unavailable'
     resolveInstallPlan(['root'], {
       minecraftVersion: '1.21.1',
       loader: 'fabric',
-      allowBeta: false
+      allowBeta: false, modsDir: './mods', mods: {}
     }, {}, services),
     /No compatible version found for Missing/
   );
@@ -1080,13 +1111,14 @@ test('a download failure preserves the previous JAR and lock file', async () => 
   await fs.writeFile(path.join(modsDir, 'old.jar'), 'old');
   globalThis.fetch = async () => new Response('failure', { status: 503 });
 
-  const plan = {
+  const plan: InstallPlan = {
+    versionToProject: new Map(),
     allowBeta: false,
     rootProjectIds: new Set(['root']),
     items: new Map([['root', {
       project: { id: 'root', slug: 'root', title: 'Root' },
       version: {
-        id: 'new-version',
+        id: 'new-version', project_id: 'root', version_type: 'release',
         version_number: '2.0.0',
         dependencies: [],
         files: [{ filename: 'new.jar', url: 'https://example.test/new.jar', primary: true }]
@@ -1125,13 +1157,14 @@ test('a successful installation replaces files and saves the new state', async (
   await createProjectState(config, lock);
   await fs.writeFile(path.join(modsDir, 'old.jar'), 'old');
   globalThis.fetch = async () => new Response('new');
-  const plan = {
+  const plan: InstallPlan = {
+    versionToProject: new Map(),
     allowBeta: false,
     rootProjectIds: new Set(['root']),
     items: new Map([['root', {
       project: { id: 'root', slug: 'root', title: 'Root' },
       version: {
-        id: 'new-version', version_number: '2.0.0', dependencies: [],
+        id: 'new-version', project_id: 'root', version_type: 'release', version_number: '2.0.0', dependencies: [],
         files: [{ filename: 'new.jar', url: 'https://example.test/new.jar', primary: true }]
       },
       dependencies: [],
@@ -1176,7 +1209,7 @@ test('remove retains a direct mod when it is still a required dependency', async
 
   assert.equal(result.retainedAsDependency, 'shared');
   assert.equal((await readLock()).installed.shared.isDependency, true);
-  assert.equal((await readConfig()).mods.shared, undefined);
+  assert.equal((await requireConfig()).mods.shared, undefined);
   assert.equal(await fs.readFile(path.join(modsDir, 'shared.jar'), 'utf8'), 'shared');
 });
 
@@ -1234,7 +1267,7 @@ test('remove deletes a direct mod together with its orphaned dependency', async 
 
   assert.deepEqual(new Set(result.removed), new Set(['parent', 'orphan']));
   assert.deepEqual((await readLock()).installed, {});
-  assert.deepEqual((await readConfig()).mods, {});
+  assert.deepEqual((await requireConfig()).mods, {});
   await assert.rejects(fs.access(path.join(modsDir, 'parent.jar')), { code: 'ENOENT' });
   await assert.rejects(fs.access(path.join(modsDir, 'orphan.jar')), { code: 'ENOENT' });
 });

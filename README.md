@@ -277,14 +277,16 @@ npm test
 npm run check
 ```
 
-The CLI and optional launcher are written in TypeScript with strict type
+The CLI, optional launcher, and tests are written in TypeScript with strict type
 checking. `npm run build` compiles the CLI into `dist/bin` and `dist/src`, and
 the separate launcher package into `features/launcher/dist`. Both published npm
 packages contain JavaScript and type declarations, so users only need Node.js
 18 or newer. TypeScript is a development dependency.
 
-`npm test` builds both packages before running the regression tests against
-their compiled JavaScript. `npm run check` checks both packages and the
-compile-time contracts in `type-tests`. `npm pack` builds automatically before
+`npm test` builds both packages and compiles the regression tests into
+`test-dist` before running them against the compiled packages. `npm run check`
+builds both packages and checks the tests and compile-time contracts in
+`type-tests`. Test output is excluded from published packages.
+`npm pack` builds automatically before
 creating a package. To build the launcher independently, run `npm ci` and
 `npm run build` inside `features/launcher`.

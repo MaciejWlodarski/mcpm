@@ -9,3 +9,4 @@ mcpm-lock.json
 microsoft_accounts.json
 dist/
 *.tsbuildinfo
+test-dist/

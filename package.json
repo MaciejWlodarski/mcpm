@@ -12,10 +12,11 @@
   "scripts": {
     "start": "node ./dist/bin/mcpm.js",
     "build": "tsc -p tsconfig.json && npm run build --prefix features/launcher",
+    "build:test": "node -e \"require('fs').rmSync('test-dist', { recursive: true, force: true })\" && tsc -p tsconfig.tests.json",
     "prestart": "npm run build",
-    "pretest": "npm run build",
-    "test": "node --test --test-concurrency=1",
-    "check": "tsc -p tsconfig.json --noEmit && npm run check --prefix features/launcher && tsc -p tsconfig.type-tests.json",
+    "pretest": "npm run build && npm run build:test",
+    "test": "node --test --test-concurrency=1 test-dist",
+    "check": "npm run build && tsc -p tsconfig.type-tests.json && tsc -p tsconfig.tests.json --noEmit",
     "prepack": "npm run build"
   },
   "engines": {

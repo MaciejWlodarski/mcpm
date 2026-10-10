@@ -27,19 +27,25 @@ import {
   profilesCommand
 } from '../features/launcher/dist/index.js';
 
-function sha1(value) {
+import type { LauncherServices, MinecraftSession, StorageOptions } from '../features/launcher/dist/types.js';
+import {
+  featureApiFixture, javaFixture, launchMetadataFixture, projectContextFixture,
+  runtimeFixture, sessionFixture, versionMetadataFixture
+} from './fixtures.js';
+
+function sha1(value: string | Uint8Array) {
   return createHash('sha1').update(value).digest('hex');
 }
 
-function jsonResponse(value, status = 200) {
+function jsonResponse(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' }
   });
 }
 
-function binaryResponse(value, status = 200) {
-  return new Response(value, { status });
+function binaryResponse(value: string | Uint8Array, status = 200) {
+  return new Response(typeof value === 'string' ? value : new Uint8Array(value), { status });
 }
 
 test('Mojang rules and Maven coordinates are evaluated for the current platform', () => {
@@ -61,7 +67,8 @@ test('Mojang rules and Maven coordinates are evaluated for the current platform'
 });
 
 test('Fabric metadata is merged with the selected vanilla Minecraft profile', async () => {
-  const fetchImpl = async url => {
+  const fetchImpl: typeof fetch = async input => {
+    const url = String(input);
     if (url.endsWith('version_manifest_v2.json')) {
       return jsonResponse({ versions: [{ id: '1.21.1', url: 'https://test/version.json' }] });
     }
@@ -96,6 +103,7 @@ test('Fabric metadata is merged with the selected vanilla Minecraft profile', as
   assert.equal(metadata.loaderVersion, '0.16.10');
   assert.equal(metadata.mainClass, 'net.fabricmc.loader.impl.launch.knot.KnotClient');
   assert.equal(metadata.libraries.length, 2);
+  assert.ok(metadata.arguments);
   assert.deepEqual(metadata.arguments.jvm, ['-cp', '${classpath}', '-DFabric=true']);
 });
 
@@ -133,10 +141,11 @@ test('Minecraft runtime preparation downloads the client, libraries, natives, an
     ['https://test/assets.json', assetIndex],
     [`https://resources.download.minecraft.net/${assetHash.slice(0, 2)}/${assetHash}`, asset]
   ]);
-  const fetchImpl = async url => responses.has(url)
-    ? binaryResponse(responses.get(url))
-    : binaryResponse('missing', 404);
-  const metadata = {
+  const fetchImpl: typeof fetch = async input => {
+    const response = responses.get(String(input));
+    return response ? binaryResponse(response) : binaryResponse('missing', 404);
+  };
+  const metadata = launchMetadataFixture({
     id: 'fabric-test',
     loader: 'fabric',
     loaderVersion: '0.16.10',
@@ -156,7 +165,7 @@ test('Minecraft runtime preparation downloads the client, libraries, natives, an
       },
       natives: { windows: 'natives-windows' }
     }]
-  };
+  });
 
   try {
     const runtime = await prepareMinecraftRuntime(metadata, stateDirectory, gameDirectory, {
@@ -172,7 +181,7 @@ test('Minecraft runtime preparation downloads the client, libraries, natives, an
       path.join(runtime.assetsDirectory, 'objects', assetHash.slice(0, 2), assetHash),
       'utf8'
     ), 'asset');
-    await writePreparedRuntimeMarker(runtime, { executable: runtime.clientJar });
+    await writePreparedRuntimeMarker(runtime, javaFixture({ executable: runtime.clientJar }));
     assert.equal(JSON.parse(await fs.readFile(runtime.markerPath, 'utf8')).loaderVersion, '0.16.10');
   } finally {
     await fs.rm(stateDirectory, { recursive: true, force: true });
@@ -182,7 +191,8 @@ test('Minecraft runtime preparation downloads the client, libraries, natives, an
 test('Mojang Java runtime files are installed from the official component manifest', async () => {
   const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-java-'));
   const javaBinary = Buffer.from('java-runtime');
-  const fetchImpl = async url => {
+  const fetchImpl: typeof fetch = async input => {
+    const url = String(input);
     if (url.includes('/products/java-runtime/')) {
       return jsonResponse({
         'windows-x64': {
@@ -226,11 +236,11 @@ test('project directories connect the MCPM mod list to the game profile', async 
   try {
     await fs.mkdir(modsDirectory, { recursive: true });
     await fs.writeFile(path.join(modsDirectory, 'example.jar'), 'mod');
-    await ensureProfileDirectories({
+    await ensureProfileDirectories(projectContextFixture({
       projectRoot: root,
       modsDir: modsDirectory,
       config: { gameDir: './game' }
-    });
+    }));
     assert.equal(await fs.realpath(path.join(gameDirectory, 'mods')), await fs.realpath(modsDirectory));
     assert.equal(await fs.readFile(path.join(gameDirectory, 'mods', 'example.jar'), 'utf8'), 'mod');
   } finally {
@@ -239,7 +249,7 @@ test('project directories connect the MCPM mod list to the game profile', async 
 });
 
 test('launch command combines profile, account, memory, and resolution without a shell', () => {
-  const context = {
+  const context = projectContextFixture({
     projectRoot: 'C:\\profiles\\skyblock',
     modsDir: 'C:\\profiles\\skyblock\\mods',
     config: {
@@ -247,8 +257,8 @@ test('launch command combines profile, account, memory, and resolution without a
       loader: 'fabric',
       launcher: { memory: { min: '1G', max: '6G' }, resolution: { width: 1600, height: 900 } }
     }
-  };
-  const metadata = {
+  });
+  const metadata = launchMetadataFixture({
     id: 'fabric-test', loader: 'fabric', loaderVersion: '0.16.10',
     mainClass: 'net.fabricmc.loader.impl.launch.knot.KnotClient',
     profile: { type: 'release' }, vanilla: { type: 'release' },
@@ -260,18 +270,18 @@ test('launch command combines profile, account, memory, and resolution without a
         value: ['--width', '${resolution_width}', '--height', '${resolution_height}']
       }]
     }
-  };
-  const runtime = {
+  });
+  const runtime = runtimeFixture({
     assetsDirectory: 'C:\\cache\\assets', assetIndexId: 'test',
     nativesDirectory: 'C:\\cache\\natives', launcherDirectory: 'C:\\cache',
     classpath: ['one.jar', 'two.jar'], logging: { argument: null }
-  };
-  const java = { executable: 'java', version: 'Java 21' };
-  const session = {
+  });
+  const java = javaFixture();
+  const session = sessionFixture({
     clientId: 'client-id',
     profile: { name: 'Steve', id: 'uuid' },
     minecraft: { accessToken: 'secret-token', xuid: 'xuid' }
-  };
+  });
   const command = buildLaunchCommand(metadata, runtime, java, context, session);
 
   assert.equal(command.executable, 'java');
@@ -324,43 +334,43 @@ test('metadata paths cannot escape their launcher cache directory', () => {
 test('one-off and stored Java paths use the correct base directory', async () => {
   const projectRoot = path.join(os.tmpdir(), 'mcpm-java-profile');
   const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java';
-  const inspected = [];
-  const inspectJava = executable => {
+  const inspected: string[] = [];
+  const inspectJava = (executable: string) => {
     inspected.push(executable);
     return { available: true, executable, version: 'test', majorVersion: 21 };
   };
-  await resolveJava({ javaVersion: { majorVersion: 21 } }, {
-    minecraftVersion: '1.21.1', launcher: { javaPath: './stored-jdk' }
+  await resolveJava(versionMetadataFixture({ javaVersion: { majorVersion: 21, component: 'java-runtime-test' } }), {
+    minecraftVersion: '1.21.1', loader: 'fabric', launcher: { javaPath: './stored-jdk' }
   }, os.tmpdir(), { projectRoot, inspectJava });
   assert.equal(inspected.pop(), path.join(projectRoot, 'stored-jdk', 'bin', javaExecutable));
 
-  await resolveJava({ javaVersion: { majorVersion: 21 } }, {
-    minecraftVersion: '1.21.1'
+  await resolveJava(versionMetadataFixture({ javaVersion: { majorVersion: 21, component: 'java-runtime-test' } }), {
+    minecraftVersion: '1.21.1', loader: 'fabric'
   }, os.tmpdir(), { java: './one-off-jdk', inspectJava });
   assert.equal(inspected.pop(), path.resolve('./one-off-jdk', 'bin', javaExecutable));
 });
 
 test('launch rejects a maximum heap lower than the configured minimum', () => {
-  const context = {
+  const context = projectContextFixture({
     projectRoot: 'C:\\profiles\\test',
     config: {
       minecraftVersion: '1.21.1', loader: 'fabric',
       launcher: { memory: { min: '512M', max: '256M' } }
     }
-  };
-  const metadata = {
+  });
+  const metadata = launchMetadataFixture({
     id: 'test', mainClass: 'Main', profile: {}, vanilla: {},
     arguments: { jvm: [], game: [] }
-  };
-  const runtime = {
+  });
+  const runtime = runtimeFixture({
     assetsDirectory: 'assets', assetIndexId: 'test', nativesDirectory: 'natives',
     launcherDirectory: 'launcher', classpath: [], logging: { argument: null }
-  };
-  const session = {
+  });
+  const session = sessionFixture({
     profile: { name: 'Steve', id: 'uuid' }, minecraft: { accessToken: 'token' }
-  };
+  });
   assert.throws(
-    () => buildLaunchCommand(metadata, runtime, { executable: 'java' }, context, session),
+    () => buildLaunchCommand(metadata, runtime, javaFixture(), context, session),
     /cannot be lower/
   );
 });
@@ -368,11 +378,11 @@ test('launch rejects a maximum heap lower than the configured minimum', () => {
 test('profile setup rejects recursive mods junctions', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mcpm-cycle-'));
   try {
-    await assert.rejects(ensureProfileDirectories({
+    await assert.rejects(ensureProfileDirectories(projectContextFixture({
       projectRoot: root,
       modsDir: path.join(root, 'mods'),
       config: { gameDir: './mods' }
-    }), /paths overlap/);
+    })), /paths overlap/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -397,21 +407,23 @@ test('a stale runtime marker is not reported as prepared', async () => {
 });
 
 test('login can replace an unreadable saved session after successful authentication', async () => {
-  let saved = null;
-  let saveOptions = null;
-  const session = {
+  let saved: MinecraftSession | null = null;
+  const saveOptions: (StorageOptions | undefined)[] = [];
+  const session = sessionFixture({
     profile: { name: 'Steve', id: 'uuid' }, minecraft: { accessToken: 'token' }
-  };
-  await launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
+  });
+  await launcherLoginCommand(featureApiFixture({ getStateDirectory: () => 'state' }), {}, {
     readSession: async () => { throw new Error('corrupt DPAPI data'); },
     createSession: async () => session,
     saveSession: async (_state, value, options) => {
       saved = value;
-      saveOptions = options;
+      saveOptions.push(options);
     }
   });
   assert.equal(saved, session);
-  assert.equal(saveOptions.storage, undefined);
+  assert.equal(saveOptions.length, 1);
+  assert.ok(saveOptions[0]);
+  assert.equal(saveOptions[0].storage, undefined);
 });
 
 test('login stops before authentication when the selected storage cannot be read', async () => {
@@ -419,9 +431,9 @@ test('login stops before authentication when the selected storage cannot be read
     let authenticated = false;
     let saved = false;
     const error = Object.assign(new Error('storage unavailable'), { code });
-    await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
+    await assert.rejects(launcherLoginCommand(featureApiFixture({ getStateDirectory: () => 'state' }), {}, {
       readSession: async () => { throw error; },
-      createSession: async () => { authenticated = true; },
+      createSession: async () => { authenticated = true; return sessionFixture(); },
       saveSession: async () => { saved = true; }
     }), error);
     assert.equal(authenticated, false);
@@ -432,12 +444,13 @@ test('login stops before authentication when the selected storage cannot be read
 test('failed authentication leaves the saved launcher session untouched', async () => {
   let saved = false;
   let cleared = false;
-  await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {}, {
-    readSession: async () => ({ profile: { name: 'Alex' } }),
+  const services: LauncherServices & { clearSession: () => Promise<void> } = {
+    readSession: async () => sessionFixture(),
     createSession: async () => { throw new Error('sign-in cancelled'); },
     saveSession: async () => { saved = true; },
     clearSession: async () => { cleared = true; }
-  }), /sign-in cancelled/);
+  };
+  await assert.rejects(launcherLoginCommand(featureApiFixture({ getStateDirectory: () => 'state' }), {}, services), /sign-in cancelled/);
   assert.equal(saved, false);
   assert.equal(cleared, false);
 });
@@ -445,9 +458,9 @@ test('failed authentication leaves the saved launcher session untouched', async 
 test('macOS login passes the explicitly selected backend to storage', {
   skip: process.platform !== 'darwin'
 }, async () => {
-  const calls = [];
-  const session = { profile: { name: 'Alex', id: 'uuid' } };
-  await launcherLoginCommand({ getStateDirectory: () => 'state' }, { storage: 'file' }, {
+  const calls: { state: string; value?: MinecraftSession; options?: StorageOptions }[] = [];
+  const session = sessionFixture();
+  await launcherLoginCommand(featureApiFixture({ getStateDirectory: () => 'state' }), { storage: 'file' }, {
     readSession: async (state, options) => { calls.push({ state, options }); return null; },
     createSession: async () => session,
     saveSession: async (state, value, options) => { calls.push({ state, value, options }); }
@@ -460,10 +473,10 @@ test('macOS login passes the explicitly selected backend to storage', {
 
 test('login rejects unsupported storage options before touching the saved session', async () => {
   let read = false;
-  await assert.rejects(launcherLoginCommand({ getStateDirectory: () => 'state' }, {
+  await assert.rejects(launcherLoginCommand(featureApiFixture({ getStateDirectory: () => 'state' }), {
     storage: process.platform === 'darwin' ? 'unknown' : 'file'
   }, {
-    readSession: async () => { read = true; }
+    readSession: async () => { read = true; return null; }
   }), /--storage/);
   assert.equal(read, false);
 });
@@ -473,15 +486,15 @@ test('one malformed profile does not abort the complete profile list', async () 
     { name: 'broken', path: 'broken', active: false, available: true },
     { name: 'healthy', path: 'healthy', active: true, available: true }
   ];
-  const result = await profilesCommand({
+  const result = await profilesCommand(featureApiFixture({
     listProjects: async () => projects,
     getProjectContext: async name => {
       if (name === 'broken') throw new Error('invalid JSON');
-      return {
+      return projectContextFixture({
         config: { minecraftVersion: '1.21.1', loader: 'fabric' },
         lock: { installed: {} }
-      };
+      });
     }
-  });
+  }));
   assert.equal(result.length, 2);
 });

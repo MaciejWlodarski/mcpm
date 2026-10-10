@@ -9,41 +9,49 @@ import { removeCommand } from '../dist/src/commands/remove.js';
 import { updateProjects } from '../dist/src/commands/update.js';
 import { filenameKey } from '../dist/src/mod-files.js';
 
-let root;
-let originalCwd;
-let originalFetch;
-let originalProject;
-let originalRename;
+import type { ApiServices, InstalledMod, Lockfile, ModrinthDependency, ModrinthFile, ModrinthVersion, ProjectConfig } from '../dist/src/types.js';
+import { toError } from '../dist/src/errors.js';
 
-const dependency = (projectId, versionId = null, type = 'required') => ({
+let root: string;
+let originalCwd: string;
+let originalFetch: typeof fetch;
+let originalProject: string | undefined;
+let originalRename: typeof fs.rename;
+
+type FixtureVersion = ModrinthVersion & { files: ModrinthFile[]; dependencies: ModrinthDependency[] };
+
+const dependency = (projectId: string | null, versionId: string | null = null, type: ModrinthDependency['dependency_type'] = 'required'): ModrinthDependency => ({
   project_id: projectId, version_id: versionId, dependency_type: type
 });
-function version(projectId, id, dependencies = [], filename = `${id}.jar`) {
+function version(projectId: string, id: string, dependencies: ModrinthDependency[] = [], filename = `${id}.jar`): FixtureVersion {
   return {
     id, project_id: projectId, version_number: id, version_type: 'release',
     game_versions: ['1.21.1'], loaders: ['fabric'], dependencies,
     files: [{ filename, primary: true, url: `https://example.test/${id}.jar` }]
   };
 }
-function apiFor(latest, versions = {}) {
+function apiFor(latest: Record<string, FixtureVersion | FixtureVersion[]>, versions: Record<string, FixtureVersion> = {}): ApiServices {
   return {
     getProject: async id => ({ id, slug: id, title: id }),
-    getProjectVersions: async id => latest[id] ? (Array.isArray(latest[id]) ? latest[id] : [latest[id]]) : [],
+    getProjectVersions: async id => {
+      const selected = latest[id];
+      return selected ? (Array.isArray(selected) ? selected : [selected]) : [];
+    },
     getVersion: async id => {
       assert.ok(versions[id], `Unexpected version lookup: ${id}`);
       return versions[id];
     }
   };
 }
-function lockEntry(v, isDependency = false) {
+function lockEntry(v: FixtureVersion, isDependency = false): InstalledMod {
   return {
     title: v.project_id, slug: v.project_id, versionId: v.id, version: v.version_number,
     filename: v.files[0].filename, isDependency,
-    dependencies: v.dependencies.filter(dep => dep.dependency_type === 'required').map(dep => dep.project_id)
+    dependencies: v.dependencies.filter(dep => dep.dependency_type === 'required').flatMap(dep => dep.project_id ? [dep.project_id] : [])
   };
 }
-async function profile(slugs = [], installed = {}) {
-  const config = { minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
+async function profile(slugs: string[] = [], installed: Lockfile['installed'] = {}) {
+  const config: ProjectConfig = { minecraftVersion: '1.21.1', loader: 'fabric', modsDir: './mods',
     mods: Object.fromEntries(slugs.map(slug => [slug, 'latest'])) };
   const lock = { minecraftVersion: config.minecraftVersion, loader: config.loader, installed };
   await writeConfig(config, root);
@@ -54,8 +62,16 @@ async function profile(slugs = [], installed = {}) {
   }
   return { config, lock };
 }
-async function snapshot(directory = root) {
-  const files = {};
+interface Snapshot { [name: string]: Snapshot | { contents: string; mtimeMs: number } }
+
+function directorySnapshot(snapshot: Snapshot, name: string): Snapshot {
+  const directory = snapshot[name];
+  assert.ok(directory && !('contents' in directory), `Expected directory: ${name}`);
+  return directory as Snapshot;
+}
+
+async function snapshot(directory = root): Promise<Snapshot> {
+  const files: Snapshot = {};
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     const filePath = path.join(directory, entry.name);
     files[entry.name] = entry.isDirectory() ? await snapshot(filePath) : {
@@ -112,10 +128,10 @@ test('an install rollback keeps the backup when restoration fails and reports it
   const next = version('alpha', 'alpha-new');
   const { config, lock } = await profile(['alpha'], { alpha: lockEntry(old) });
   const plan = await resolveInstallPlan(['alpha'], config, {}, apiFor({ alpha: next }));
-  let backupPath;
+  let backupPath: string | undefined;
   fs.rename = async (from, to) => {
-    if (from.includes(`${path.sep}backup${path.sep}`)) {
-      backupPath = from;
+    if (String(from).includes(`${path.sep}backup${path.sep}`)) {
+      backupPath = String(from);
       throw Object.assign(new Error('restore denied'), { code: 'EACCES' });
     }
     if (to === path.join(root, 'mods', next.files[0].filename)) {
@@ -124,10 +140,12 @@ test('an install rollback keeps the backup when restoration fails and reports it
     return originalRename(from, to);
   };
   await assert.rejects(applyInstallPlan(plan, config, lock, { projectRoot: root }), error => {
-    assert.match(error.message, /install denied.*Recovery files were kept/);
-    assert.equal(path.dirname(path.dirname(backupPath)), error.recoveryDirectory);
+    assert.match(toError(error).message, /install denied.*Recovery files were kept/);
+    assert.ok(backupPath);
+    assert.equal(path.dirname(path.dirname(backupPath)), toError(error).recoveryDirectory);
     return true;
   });
+  assert.ok(backupPath);
   assert.equal(await fs.readFile(backupPath, 'utf8'), old.id);
   assert.equal((await readLock(root)).installed.alpha.versionId, old.id);
 });
@@ -150,10 +168,10 @@ test('a removal rollback keeps the backup when its JAR cannot be restored', asyn
   const old = version('alpha', 'alpha-old');
   await profile(['alpha'], { alpha: lockEntry(old) });
   let writeFailed = false;
-  let backupPath;
+  let backupPath: string | undefined;
   fs.rename = async (from, to) => {
-    if (from.includes('.mcpm-staging-remove-')) {
-      backupPath = from;
+    if (String(from).includes('.mcpm-staging-remove-')) {
+      backupPath = String(from);
       throw Object.assign(new Error('restore denied'), { code: 'EACCES' });
     }
     if (!writeFailed && to === path.join(root, 'mcpm.json')) {
@@ -163,10 +181,12 @@ test('a removal rollback keeps the backup when its JAR cannot be restored', asyn
     return originalRename(from, to);
   };
   await assert.rejects(removeCommand('alpha'), error => {
-    assert.match(error.message, /state write denied.*Recovery files were kept/);
-    assert.equal(path.dirname(backupPath), error.recoveryDirectory);
+    assert.match(toError(error).message, /state write denied.*Recovery files were kept/);
+    assert.ok(backupPath);
+    assert.equal(path.dirname(backupPath), toError(error).recoveryDirectory);
     return true;
   });
+  assert.ok(backupPath);
   assert.equal(await fs.readFile(backupPath, 'utf8'), old.id);
   assert.equal((await readLock(root)).installed.alpha.versionId, old.id);
 });
@@ -208,7 +228,7 @@ test('late transitive pins replace obsolete dependencies and incompatibilities',
   for (const dependencies of [latest.root.dependencies, [...latest.root.dependencies].reverse()]) {
     const plan = await resolveInstallPlan(['root'], config, {},
       apiFor({ ...latest, root: { ...latest.root, dependencies } }, { [one.id]: one }));
-    assert.equal(plan.items.get('a-shared').version.id, one.id);
+    assert.equal(plan.items.get('a-shared')?.version.id, one.id);
     assert.equal(plan.items.has('b-orphan'), false);
     assert.equal(plan.items.has('c-kept'), true);
   }
@@ -255,7 +275,7 @@ test('installing an independent mod preserves existing direct mods and manual JA
   assert.equal(installed.lock.installed.shared.versionId, one.id);
   const after = await snapshot();
   for (const filename of [alpha.files[0].filename, one.files[0].filename, 'manual.jar']) {
-    assert.deepEqual(after.mods[filename], before.mods[filename]);
+    assert.deepEqual(directorySnapshot(after, 'mods')[filename], directorySnapshot(before, 'mods')[filename]);
   }
 });
 
@@ -281,7 +301,7 @@ test('partial updates preserve skipped direct mods and their exact dependencies'
   assert.equal(result.installed.shared.versionId, one.id);
   const after = await snapshot();
   for (const filename of [alphaOld.files[0].filename, one.files[0].filename]) {
-    assert.deepEqual(after.mods[filename], before.mods[filename]);
+    assert.deepEqual(directorySnapshot(after, 'mods')[filename], directorySnapshot(before, 'mods')[filename]);
   }
 });
 
@@ -357,6 +377,8 @@ test('an API error for a skipped installed mod prevents unsafe partial writes', 
   globalThis.fetch = async () => assert.fail('An unverified retained mod must block file changes');
   const summary = await updateProjects(['alpha', 'beta'], {}, { config, lock, projectRoot: root, apiServices: api });
   assert.equal(summary.updated, 0);
-  assert.match(summary.failures.find(failure => failure.slug === 'alpha').message, /unverified: API unavailable/);
+  const failure = summary.failures.find(failure => failure.slug === 'alpha');
+  assert.ok(failure);
+  assert.match(failure.message, /unverified: API unavailable/);
   assert.deepEqual(await snapshot(), before);
 });
