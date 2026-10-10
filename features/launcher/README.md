@@ -2,11 +2,37 @@
 
 Optional direct Minecraft launching for MCPM profiles.
 
+## Installation
+
+Install the MCPM CLI from [release v1.1.0](https://github.com/MaciejWlodarski/mcpm/releases/tag/v1.1.0):
+
+```sh
+npm install --global https://github.com/MaciejWlodarski/mcpm/releases/download/v1.1.0/mcpm-1.1.0.tgz
+```
+
+Download `mcpm-feature-launcher-0.3.0.tgz` from the same release. Choose a
+permanent location for the `mcpm-launcher` directory, then run these commands
+from the directory containing the downloaded package:
+
+```sh
+npm install --prefix ./mcpm-launcher ./mcpm-feature-launcher-0.3.0.tgz
+mcpm feature install launcher --source ./mcpm-launcher/node_modules/@mcpm/feature-launcher
+mcpm launcher --help
+```
+
+Keep the `mcpm-launcher` directory after installation. The release page also
+provides an installation guide and SHA-256 checksums. Node.js 18 or newer with
+npm is required; the release package is already compiled.
+
+Microsoft sign-in and account storage support Windows and macOS. Managing mods
+and preparing runtime files do not require sign-in. Direct launching requires
+a licensed Minecraft: Java Edition Microsoft account.
+
 ## Development
 
 Run `npm ci`, `npm run check`, and `npm run build` in this directory to work on
 the launcher independently. The TypeScript source is compiled into `dist`,
-which is the Feature API entry point included in the published npm package.
+which is the Feature API entry point included in the release package.
 `npm pack` builds the package automatically. When developing from the MCPM
 repository, the root `npm run build` builds both the CLI and launcher.
 

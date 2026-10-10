@@ -6,24 +6,61 @@ isolated, and can download and launch Minecraft directly without the official
 launcher.
 
 > **Project status:** mod management, Microsoft authentication, profile
-> management, Mojang runtime installation, and direct Fabric launching are
+> management, Mojang runtime installation, and direct vanilla/Fabric launching are
 > functional. Forge, NeoForge, and Quilt launch adapters are not implemented yet.
 
 ## Requirements
 
-- Node.js 18 or newer
-- Windows (DPAPI) or macOS (Keychain) for secure account storage
-- A licensed Minecraft: Java Edition Microsoft account
+- Node.js 18 or newer with npm.
+- Mod management supports Windows, macOS, and Linux.
+- Microsoft sign-in and account storage support Windows (DPAPI) and macOS
+  (Keychain, with an explicit file-storage fallback).
+- Direct launching requires a licensed Minecraft: Java Edition Microsoft
+  account. Managing mods and preparing runtime files do not require sign-in.
 
 Java does not need to be installed manually. MCPM uses a compatible system Java
 when available and otherwise downloads the runtime specified by Mojang metadata.
 
 ## Installation
 
-Run these commands in the repository directory:
+### Install the CLI from the release
 
-```text
-npm install
+[MCPM v1.1.0](https://github.com/MaciejWlodarski/mcpm/releases/tag/v1.1.0)
+includes ready-to-install packages. Install the CLI directly from GitHub:
+
+```sh
+npm install --global https://github.com/MaciejWlodarski/mcpm/releases/download/v1.1.0/mcpm-1.1.0.tgz
+mcpm --version
+```
+
+The release contains compiled JavaScript and type declarations; Node.js and
+npm are sufficient to install it. You can also download `mcpm-1.1.0.tgz` and run
+`npm install --global ./mcpm-1.1.0.tgz` in the download directory.
+
+The release page includes an [installation guide](https://github.com/MaciejWlodarski/mcpm/releases/download/v1.1.0/INSTALL.md)
+and `SHA256SUMS.txt` for verifying the downloaded files.
+
+### Install the optional launcher
+
+Download `mcpm-feature-launcher-0.3.0.tgz` from the same release. Choose a
+permanent location for the `mcpm-launcher` directory, then run these commands
+from the directory containing the downloaded package:
+
+```sh
+npm install --prefix ./mcpm-launcher ./mcpm-feature-launcher-0.3.0.tgz
+mcpm feature install launcher --source ./mcpm-launcher/node_modules/@mcpm/feature-launcher
+mcpm launcher --help
+```
+
+Keep the `mcpm-launcher` directory after installation. The launcher adds
+`mcpm launcher`, `mcpm launch`, `mcpm profiles`, and `mcpm profile` commands.
+
+### Install from source
+
+For development, run these commands in the repository directory:
+
+```sh
+npm ci
 npm run build
 npm link
 mcpm feature install launcher
@@ -37,13 +74,22 @@ changing its package source.
 ## Quick start
 
 Create a project/profile in the directory that should contain saves, config,
-logs, resource packs, and mods:
+logs, resource packs, and mods.
 
-```text
-mcpm init C:\Minecraft\profiles\my-modpack
-mcpm profile my-modpack
+For this example, select Fabric when `init` asks for a loader. Initialization
+registers the project and makes it active:
+
+```sh
+mcpm init ./my-modpack
 mcpm install fabric-api
 mcpm install sodium
+mcpm list
+```
+
+With the [optional launcher installed](#install-the-optional-launcher), sign in
+and start the active profile:
+
+```sh
 mcpm launcher login
 mcpm launch
 ```
@@ -54,12 +100,12 @@ are cached globally and reused by other profiles.
 
 ## Commands
 
+The core CLI provides these commands:
+
 ```text
 mcpm init [path]
 mcpm projects
-mcpm profiles
 mcpm use <name-or-path>
-mcpm profile <name-or-path>
 mcpm current
 mcpm forget <name-or-path>
 
@@ -69,6 +115,11 @@ mcpm config --memory 6G
 mcpm config --resolution 1600x900
 mcpm config --java C:\Java\jdk-25
 mcpm config --java auto
+mcpm config --game-dir ./game
+
+mcpm feature list
+mcpm feature install launcher --source <package-directory>
+mcpm feature uninstall launcher
 
 mcpm search <query>
 mcpm install <slug>
@@ -80,10 +131,22 @@ mcpm upgrade <version>
 mcpm upgrade <version> --check
 mcpm upgrade <version> --loader fabric
 mcpm list
+```
 
+With the optional launcher installed:
+
+```text
+mcpm profiles
+mcpm profile <name-or-path>
 mcpm launcher status [profile]
 mcpm launcher prepare [profile]
+mcpm launcher login
+mcpm launcher login --storage=file
+mcpm launcher account
+mcpm launcher account --refresh
+mcpm launcher logout
 mcpm launch [profile]
+mcpm launch [profile] --prepare-only
 mcpm launch [profile] --dry-run
 mcpm launch [profile] --detach
 ```
@@ -101,9 +164,10 @@ its own:
 - game directory, saves, config, logs, screenshots, and resource packs
 - Java, memory, and resolution overrides
 
-`mcpm profiles` lists profiles. `mcpm profile <name>` selects the active profile;
-the older `projects` and `use` commands remain available. You can also launch a
-specific profile without changing the active one:
+The core commands `mcpm projects` and `mcpm use <name-or-path>` list and select
+projects. With the launcher installed, `mcpm profiles` adds runtime status and
+`mcpm profile <name-or-path>` selects the active launch profile. You can also
+launch a specific profile without changing the active one:
 
 ```text
 mcpm launch hypixel-skyblock
@@ -162,10 +226,10 @@ If an operation fails and restoring the previous files also fails, MCPM keeps
 the remaining backups in its staging directory and prints the recovery path.
 
 `mcpm upgrade <version>` performs a profile migration. MCPM resolves a complete
-compatible graph of managed mods for the new Minecraft version before replacing any files or
-saving the new configuration. `--loader <loader>` changes the loader in the same
-transaction. The next launch automatically prepares the matching game and loader
-runtime from the shared cache.
+compatible graph of managed mods for the new Minecraft version before replacing
+any files or saving the new configuration. `--loader <loader>` changes the
+loader in the same transaction. The next launch automatically prepares the
+matching game and loader runtime from the shared cache.
 
 Use `mcpm upgrade <version> --check` to resolve the migration without downloading
 JARs or changing any profile files. It prints the target mod versions or reports
@@ -189,10 +253,10 @@ that operation. Alpha releases are never selected automatically.
 ## Direct launcher
 
 The launcher is an optional `@mcpm/feature-launcher` package loaded from
-`~/.mcpm/features`.
+`~/.mcpm/features`. Follow [the launcher installation instructions](#install-the-optional-launcher)
+above before using its commands.
 
 ```text
-mcpm feature install launcher
 mcpm launcher login
 mcpm launcher account
 mcpm launcher prepare hypixel-skyblock
@@ -279,7 +343,7 @@ npm run check
 
 The CLI, optional launcher, and tests are written in TypeScript with strict type
 checking. `npm run build` compiles the CLI into `dist/bin` and `dist/src`, and
-the separate launcher package into `features/launcher/dist`. Both published npm
+the separate launcher package into `features/launcher/dist`. Both release
 packages contain JavaScript and type declarations, so users only need Node.js
 18 or newer. TypeScript is a development dependency.
 
@@ -287,6 +351,5 @@ packages contain JavaScript and type declarations, so users only need Node.js
 `test-dist` before running them against the compiled packages. `npm run check`
 builds both packages and checks the tests and compile-time contracts in
 `type-tests`. Test output is excluded from published packages.
-`npm pack` builds automatically before
-creating a package. To build the launcher independently, run `npm ci` and
-`npm run build` inside `features/launcher`.
+`npm pack` builds automatically before creating a package. To build the launcher
+independently, run `npm ci` and `npm run build` inside `features/launcher`.
